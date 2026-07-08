@@ -1,0 +1,6 @@
+initialQuality:
+  buildRuntime: 0.25
+  e2e: 0.35
+  value: 0.15
+  visual: 0.15
+  promptAdherence: 0.10

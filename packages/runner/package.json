@@ -1,0 +1,8 @@
+{
+  "name": "@ape-benchmark/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/cli.js",
+  "types": "dist/cli.d.ts"
+}

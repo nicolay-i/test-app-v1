@@ -1,0 +1,10 @@
+{
+  "initial": {
+    "visibleTitle": "todos",
+    "filters": ["All", "Active", "Completed"]
+  },
+  "afterCreateTask": {
+    "taskText": "Ship benchmark MVP",
+    "itemsLeft": "1 item left"
+  }
+}

@@ -1,0 +1,19 @@
+<screen name="TodoMVC" viewport="1440x900">
+  <main width="550" align="center">
+    <title level="1">todos</title>
+    <input role="new-todo" placeholder="What needs to be done?" autofocus="true" />
+    <section name="todo-list">
+      <todo-item state="active" title="Ship benchmark MVP" />
+      <todo-item state="completed" title="Read TodoMVC spec" />
+    </section>
+    <footer>
+      <counter>1 item left</counter>
+      <filters active="All">
+        <filter>All</filter>
+        <filter>Active</filter>
+        <filter>Completed</filter>
+      </filters>
+      <button>Clear completed</button>
+    </footer>
+  </main>
+</screen>

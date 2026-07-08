@@ -1,0 +1,39 @@
+id: _example
+name: Example Task
+version: 0.1.0
+kind: crud_stateful
+scaffold: vite-react-ts
+license_status: synthetic
+
+source:
+  name: Synthetic
+  url: none
+  license: internal
+  notes: Placeholder task created by pnpm bench init.
+
+reference:
+  spec: reference/spec.md
+  acceptanceCriteria: reference/acceptance-criteria.md
+  semanticUi: reference/semantic-ui.xml
+  expectedValues: reference/expected-values.json
+
+constraints:
+  framework: react
+  language: typescript
+  persistence: localStorage
+  backend: none
+
+checks:
+  install: true
+  build: true
+  runtimeSmoke: true
+  codeHealth: true
+
+promptArms:
+  user:
+    - U1-structured
+
+scoring:
+  weights: scoring/weights.yaml
+
+evolution: []

@@ -1,0 +1,41 @@
+id: todomvc
+name: TodoMVC Lifecycle
+version: 0.1.0
+kind: crud_stateful
+scaffold: vite-react-ts
+license_status: permissive_reference
+
+source:
+  name: TodoMVC
+  url: https://github.com/tastejs/todomvc
+  license: MIT or repo-stated license
+  notes: Reference behavior derived from TodoMVC app spec. Implementation code is not copied.
+
+reference:
+  spec: reference/spec.md
+  acceptanceCriteria: reference/acceptance-criteria.md
+  semanticUi: reference/semantic-ui.xml
+  expectedValues: reference/expected-values.json
+
+constraints:
+  framework: react
+  language: typescript
+  persistence: localStorage
+  backend: none
+
+checks:
+  install: true
+  build: true
+  runtimeSmoke: true
+  codeHealth: true
+
+promptArms:
+  user:
+    - U1-structured
+    - U3-semantic-ui
+    - U5-maintainable
+
+scoring:
+  weights: scoring/weights.yaml
+
+evolution: []

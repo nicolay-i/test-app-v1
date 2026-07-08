@@ -1,0 +1,51 @@
+# Manifest
+
+Archive: app_benchmark_specs_v2.zip
+
+All files in this archive are Markdown documents.
+
+## Files
+
+```text
+00_README.md
+01_PRODUCT_SPEC.md
+02_SYSTEM_ARCHITECTURE_NODEJS.md
+03_OPENCODE_INTEGRATION_SPEC.md
+04_BENCHMARK_TASK_FORMAT.md
+05_PROMPT_AB_TESTING_SPEC.md
+06_REFERENCE_ASSETS_AND_SOURCES.md
+07_EVALUATION_PIPELINE_SPEC.md
+08_CODE_HEALTH_AND_MAINTAINABILITY_METRICS.md
+09_LIFECYCLE_EVOLUTION_BENCHMARK.md
+10_EXTERNAL_JURY_FEEDBACK_SPEC.md
+11_DATA_MODEL_AND_RESULT_SCHEMA.md
+12_RUNNER_CLI_SPEC.md
+13_MVP_EXECUTION_PLAN.md
+14_SECURITY_PRIVACY_REPRODUCIBILITY.md
+15_IMPLEMENTATION_BACKLOG.md
+16_REQUIREMENTS_NEGOTIATION_BENCHMARK.md
+17_AMBIGUITY_SCENARIO_FORMAT.md
+18_CLARIFICATION_DECISION_PROTOCOL.md
+19_ORACLE_USER_SIMULATION.md
+20_CODEX_OPENCODE_SUPERVISOR_SKILL.md
+21_NEGOTIATION_SCORING_AND_JURY.md
+22_NEGOTIATION_PROMPT_ARMS.md
+CHANGELOG_V2.md
+MANIFEST.md
+examples/ambiguity_scenarios_todomvc.md
+examples/jury_packet_example.md
+examples/todomvc_task_example.md
+templates/ambiguity_scenario_template.md
+templates/decision_protocol_prompt_template.md
+templates/edit_prompt_template.md
+templates/evolution_step_template.md
+templates/external_jury_form_template.md
+templates/final_report_template.md
+templates/model_config_template.md
+templates/oracle_user_template.md
+templates/prompt_arm_template.md
+templates/scoring_config_template.md
+templates/semantic_ui_template.md
+templates/system_prompt_template.md
+templates/task_spec_template.md
+```

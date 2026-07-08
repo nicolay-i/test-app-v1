@@ -1,0 +1,29 @@
+import { access, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+export async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function ensureDir(dirPath: string): Promise<void> {
+  await mkdir(dirPath, { recursive: true });
+}
+
+export async function writeFileIfMissing(filePath: string, content: string): Promise<boolean> {
+  if (await pathExists(filePath)) {
+    return false;
+  }
+
+  await ensureDir(path.dirname(filePath));
+  await writeFile(filePath, content, "utf8");
+  return true;
+}
+
+export function resolveFromRoot(rootDir: string, maybeRelative: string): string {
+  return path.isAbsolute(maybeRelative) ? maybeRelative : path.resolve(rootDir, maybeRelative);
+}
