@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { loadMatrixConfig } from "./config.js";
 import { EventLogger } from "./events.js";
+import { evaluateWorkspace } from "./evaluator.js";
 import { ensureDir, pathExists, resolveFromRoot, writeFileIfMissing } from "./fs.js";
 import { buildTrajectoryPlan } from "./matrix.js";
 import {
@@ -21,10 +22,13 @@ import {
   scaffoldStyles,
   scaffoldTsconfig,
   todoMvcAcceptanceCriteria,
+  todoMvcE2eSpec,
   todoMvcExpectedValues,
   todoMvcSemanticUi,
   todoMvcSpec,
-  todoMvcTaskYaml
+  todoMvcTaskYaml,
+  todoMvcValuesSpec,
+  todoMvcVisualSpec
 } from "./templates.js";
 import { validateTaskWithPathChecks } from "./task.js";
 
@@ -49,6 +53,9 @@ async function main(): Promise<void> {
         break;
       case "validate-task":
         await validateTaskCommand(args);
+        break;
+      case "eval":
+        await evalCommand(args);
         break;
       case "run-matrix":
         await runMatrixCommand(args);
@@ -82,6 +89,9 @@ async function initCommand(): Promise<void> {
     ["tasks/todomvc/reference/acceptance-criteria.md", todoMvcAcceptanceCriteria],
     ["tasks/todomvc/reference/semantic-ui.xml", todoMvcSemanticUi],
     ["tasks/todomvc/reference/expected-values.json", todoMvcExpectedValues],
+    ["tasks/todomvc/tests/base/e2e.spec.ts", todoMvcE2eSpec],
+    ["tasks/todomvc/tests/base/values.spec.ts", todoMvcValuesSpec],
+    ["tasks/todomvc/tests/base/visual.spec.ts", todoMvcVisualSpec],
     ["tasks/todomvc/scoring/weights.yaml", defaultWeights],
     ["scaffolds/vite-react-ts/package.json", scaffoldPackageJson],
     ["scaffolds/vite-react-ts/index.html", scaffoldIndexHtml],
@@ -119,6 +129,36 @@ async function validateTaskCommand(args: CliArgs): Promise<void> {
   }
 }
 
+async function evalCommand(args: CliArgs): Promise<void> {
+  const rootDir = process.cwd();
+  const workspacePath = resolveFromRoot(rootDir, stringOption(args, "workspace", "scaffolds/vite-react-ts"));
+  const taskId = stringOption(args, "task", "todomvc");
+  const versionId = stringOption(args, "version", "v0");
+  const artifactsPath = resolveFromRoot(
+    rootDir,
+    stringOption(args, "artifacts", `runs/local-eval/artifacts/${taskId}/${versionId}`)
+  );
+  const skipInstall = booleanOption(args, "skip-install", false);
+
+  const result = await evaluateWorkspace({
+    workspacePath,
+    taskId,
+    versionId,
+    artifactsPath,
+    skipInstall
+  });
+
+  console.log(`eval ${result.status}`);
+  console.log(`install: ${result.checks.install.status}`);
+  console.log(`build: ${result.checks.build.status}`);
+  console.log(`runtimeSmoke: ${result.checks.runtimeSmoke.status}`);
+  console.log(`artifacts: ${artifactsPath}`);
+
+  if (result.status === "failed") {
+    process.exitCode = 1;
+  }
+}
+
 async function preflightCommand(args: CliArgs): Promise<void> {
   const rootDir = process.cwd();
   const configPath = resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml"));
@@ -133,15 +173,15 @@ async function preflightCommand(args: CliArgs): Promise<void> {
     data: { configPath }
   });
 
+  const scaffoldPath = resolveFromRoot(rootDir, config.scaffold.path);
   const checks = [
     await checkCommand("node", ["--version"]),
     await checkCommand("pnpm", ["--version"]),
     await checkCommand("git", ["--version"]),
     await checkCommand("opencode", ["--version"], true),
-    await checkCommand("pnpm", ["exec", "playwright", "--version"], true)
+    await checkCommand("pnpm", ["--dir", scaffoldPath, "exec", "playwright", "--version"], true)
   ];
 
-  const scaffoldPath = resolveFromRoot(rootDir, config.scaffold.path);
   const scaffoldExists = await pathExists(scaffoldPath);
   const taskResults = await Promise.all(
     config.tasks.map((taskId) => validateTaskWithPathChecks(path.join(rootDir, "tasks", taskId)))
@@ -352,6 +392,7 @@ function printHelp(): void {
   pnpm bench init
   pnpm bench validate-task tasks/todomvc
   pnpm bench preflight --config configs/mvp.yaml
+  pnpm bench eval --workspace scaffolds/vite-react-ts --task todomvc --version v0
   pnpm bench run-matrix --config configs/mvp.yaml --dry-run
 `);
 }

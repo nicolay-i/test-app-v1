@@ -69,6 +69,12 @@ checks:
   install: true
   build: true
   runtimeSmoke: true
+  e2e:
+    - tests/base/e2e.spec.ts
+  values:
+    - tests/base/values.spec.ts
+  visual:
+    - tests/base/visual.spec.ts
   codeHealth: true
 
 promptArms:
@@ -181,6 +187,68 @@ export const todoMvcExpectedValues = `{
     "itemsLeft": "1 item left"
   }
 }
+`;
+
+export const todoMvcE2eSpec = `import { expect, test } from "@playwright/test";
+
+test("creates and completes a todo", async ({ page }) => {
+  await page.goto("/");
+
+  const input = page.getByRole("textbox", { name: /new todo|what needs to be done/i });
+  await input.fill("Ship benchmark MVP");
+  await input.press("Enter");
+
+  await expect(page.getByText("Ship benchmark MVP")).toBeVisible();
+  await expect(page.getByText(/1 item left/i)).toBeVisible();
+
+  await page.getByRole("checkbox", { name: /Ship benchmark MVP/i }).check();
+  await expect(page.getByText(/0 items left|0 item left/i)).toBeVisible();
+});
+
+test("filters active and completed todos", async ({ page }) => {
+  await page.goto("/");
+
+  const input = page.getByRole("textbox", { name: /new todo|what needs to be done/i });
+  await input.fill("Active task");
+  await input.press("Enter");
+  await input.fill("Completed task");
+  await input.press("Enter");
+
+  await page.getByRole("checkbox", { name: /Completed task/i }).check();
+  await page.getByRole("link", { name: /^Active$/i }).click();
+  await expect(page.getByText("Active task")).toBeVisible();
+  await expect(page.getByText("Completed task")).toBeHidden();
+
+  await page.getByRole("link", { name: /^Completed$/i }).click();
+  await expect(page.getByText("Completed task")).toBeVisible();
+  await expect(page.getByText("Active task")).toBeHidden();
+});
+`;
+
+export const todoMvcValuesSpec = `import { expect, test } from "@playwright/test";
+
+test("does not create empty todos and persists state", async ({ page }) => {
+  await page.goto("/");
+
+  const input = page.getByRole("textbox", { name: /new todo|what needs to be done/i });
+  await input.press("Enter");
+  await expect(page.getByText(/0 items left|0 item left/i)).toBeVisible();
+
+  await input.fill("Persisted task");
+  await input.press("Enter");
+  await page.reload();
+
+  await expect(page.getByText("Persisted task")).toBeVisible();
+  await expect(page.getByText(/1 item left/i)).toBeVisible();
+});
+`;
+
+export const todoMvcVisualSpec = `import { expect, test } from "@playwright/test";
+
+test("captures TodoMVC desktop shell", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveScreenshot("todomvc-desktop.png", { fullPage: true });
+});
 `;
 
 export const exampleSpec = `# Example Task

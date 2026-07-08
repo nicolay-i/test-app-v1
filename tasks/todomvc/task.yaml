@@ -27,6 +27,12 @@ checks:
   install: true
   build: true
   runtimeSmoke: true
+  e2e:
+    - tests/base/e2e.spec.ts
+  values:
+    - tests/base/values.spec.ts
+  visual:
+    - tests/base/visual.spec.ts
   codeHealth: true
 
 promptArms:

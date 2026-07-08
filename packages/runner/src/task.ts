@@ -34,6 +34,7 @@ export async function validateTask(taskDir: string): Promise<TaskValidationResul
   }
 
   validateReferencePaths(parsed, taskDir, errors);
+  validateCheckPaths(parsed, taskDir, errors);
   validateScoring(parsed, taskDir, errors);
   validateEvolution(parsed, taskDir, errors, warnings);
 
@@ -44,6 +45,31 @@ export async function validateTask(taskDir: string): Promise<TaskValidationResul
     errors,
     warnings
   };
+}
+
+function validateCheckPaths(
+  parsed: Record<string, unknown>,
+  taskDir: string,
+  errors: string[]
+): void {
+  const checks = recordField(parsed, "checks", errors);
+  if (!checks) {
+    return;
+  }
+
+  for (const key of ["e2e", "values", "visual"]) {
+    const value = checks[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+      errors.push(`Field "checks.${key}" must be a string array`);
+      continue;
+    }
+    for (const relativePath of value) {
+      addMissingPathError(path.join(taskDir, relativePath), errors);
+    }
+  }
 }
 
 function validateReferencePaths(
