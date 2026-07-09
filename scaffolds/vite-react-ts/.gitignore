@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.ape-*.log
+playwright-report/
+test-results/

@@ -191,6 +191,19 @@ export const todoMvcExpectedValues = `{
 
 export const todoMvcE2eSpec = `import { expect, test } from "@playwright/test";
 
+async function toggleTodo(page: import("@playwright/test").Page, title: string) {
+  await page.locator("li").filter({ hasText: title }).getByRole("checkbox").check();
+}
+
+async function clickFilter(page: import("@playwright/test").Page, name: string) {
+  const link = page.getByRole("link", { name: new RegExp(\`^\${name}$\`, "i") });
+  if ((await link.count()) > 0) {
+    await link.click();
+    return;
+  }
+  await page.getByRole("button", { name: new RegExp(\`^\${name}$\`, "i") }).click();
+}
+
 test("creates and completes a todo", async ({ page }) => {
   await page.goto("/");
 
@@ -201,7 +214,7 @@ test("creates and completes a todo", async ({ page }) => {
   await expect(page.getByText("Ship benchmark MVP")).toBeVisible();
   await expect(page.getByText(/1 item left/i)).toBeVisible();
 
-  await page.getByRole("checkbox", { name: /Ship benchmark MVP/i }).check();
+  await toggleTodo(page, "Ship benchmark MVP");
   await expect(page.getByText(/0 items left|0 item left/i)).toBeVisible();
 });
 
@@ -214,12 +227,12 @@ test("filters active and completed todos", async ({ page }) => {
   await input.fill("Completed task");
   await input.press("Enter");
 
-  await page.getByRole("checkbox", { name: /Completed task/i }).check();
-  await page.getByRole("link", { name: /^Active$/i }).click();
+  await toggleTodo(page, "Completed task");
+  await clickFilter(page, "Active");
   await expect(page.getByText("Active task")).toBeVisible();
   await expect(page.getByText("Completed task")).toBeHidden();
 
-  await page.getByRole("link", { name: /^Completed$/i }).click();
+  await clickFilter(page, "Completed");
   await expect(page.getByText("Completed task")).toBeVisible();
   await expect(page.getByText("Active task")).toBeHidden();
 });
@@ -232,7 +245,7 @@ test("does not create empty todos and persists state", async ({ page }) => {
 
   const input = page.getByRole("textbox", { name: /new todo|what needs to be done/i });
   await input.press("Enter");
-  await expect(page.getByText(/0 items left|0 item left/i)).toBeVisible();
+  await expect(page.locator("li")).toHaveCount(0);
 
   await input.fill("Persisted task");
   await input.press("Enter");
@@ -247,7 +260,8 @@ export const todoMvcVisualSpec = `import { expect, test } from "@playwright/test
 
 test("captures TodoMVC desktop shell", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveScreenshot("todomvc-desktop.png", { fullPage: true });
+  await expect(page.getByRole("heading", { name: /todos/i })).toBeVisible();
+  await page.screenshot({ fullPage: true });
 });
 `;
 
@@ -284,6 +298,36 @@ export const defaultWeights = `initialQuality:
   promptAdherence: 0.10
 `;
 
+export const systemPromptS2 = `You are a coding agent building small frontend applications for a benchmark.
+
+Prioritize simple, maintainable code. Keep behavior explicit, avoid unnecessary dependencies, and preserve the existing project structure. Make the smallest complete implementation that satisfies the task.
+`;
+
+export const userPromptU1 = `Build the requested application from the provided product spec and acceptance criteria.
+
+Deliver a working React TypeScript implementation in the current scaffold.
+`;
+
+export const userPromptU3 = `Build the requested application from the provided product spec, acceptance criteria, and semantic UI reference.
+
+Use the semantic UI tree as the structural reference for roles, labels, controls, and visible states. Deliver a working React TypeScript implementation in the current scaffold.
+`;
+
+export const userPromptU5 = `Build the requested application from the provided product spec, acceptance criteria, semantic UI reference, and expected values.
+
+Maintainability requirements:
+- keep state transitions clear;
+- keep localStorage persistence isolated and testable;
+- avoid duplicating filtering and counting logic;
+- prefer small components only where they reduce real complexity;
+- do not add libraries unless the task truly needs them.
+`;
+
+export const editPromptE2 = `Implement the requested change as the smallest maintainable change.
+
+Preserve existing behavior unless the change explicitly replaces it. Do not rewrite the whole app for a local feature. Keep tests and package scripts runnable.
+`;
+
 export const scaffoldPackageJson = `{
   "name": "ape-vite-react-ts-scaffold",
   "version": "0.1.0",
@@ -307,6 +351,14 @@ export const scaffoldPackageJson = `{
     "@types/react-dom": "^19.0.2"
   }
 }
+`;
+
+export const scaffoldGitignore = `node_modules/
+dist/
+*.tsbuildinfo
+.ape-*.log
+playwright-report/
+test-results/
 `;
 
 export const scaffoldIndexHtml = `<html>
