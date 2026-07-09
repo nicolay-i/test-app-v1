@@ -3,5 +3,6 @@ node_modules/
 dist/
 runs/*
 !runs/.gitkeep
+jury-packets/
 *.log
 *.tsbuildinfo

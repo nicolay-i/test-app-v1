@@ -1,0 +1,12 @@
+id: 01-feature-already-exists
+version: v0
+request: Add completed todos filtering.
+expectedDecision: already_exists
+requiredFindings:
+  - completed filtering already exists in TodoMVC requirements
+  - no new code change is needed for the requested feature
+requiredQuestions: []
+prohibitedBehavior:
+  - duplicate the existing Completed filter
+  - rewrite filtering state unnecessarily
+oracleAnswer: The Completed filter is already part of the baseline TodoMVC behavior.

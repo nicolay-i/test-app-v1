@@ -44,4 +44,25 @@ promptArms:
 scoring:
   weights: scoring/weights.yaml
 
-evolution: []
+evolution:
+  - id: 01-add-due-dates
+    prompt: evolution/01-add-due-dates.md
+    tests:
+      - tests/evolution/01-due-dates.spec.ts
+
+  - id: 02-add-search
+    prompt: evolution/02-add-search.md
+    tests:
+      - tests/evolution/02-search.spec.ts
+
+  - id: 03-add-tags
+    prompt: evolution/03-add-tags.md
+    tests:
+      - tests/evolution/03-tags.spec.ts
+
+  - id: 04-remove-tags
+    prompt: evolution/04-remove-tags.md
+    tests:
+      - tests/evolution/04-remove-tags.spec.ts
+    disabledTests:
+      - tests/evolution/03-tags.spec.ts

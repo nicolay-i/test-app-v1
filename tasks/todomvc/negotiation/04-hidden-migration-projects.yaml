@@ -1,0 +1,17 @@
+id: 04-hidden-migration-projects
+version: v3
+request: Replace tags with projects.
+expectedDecision: clarify
+requiredFindings:
+  - replacing tags affects persisted data
+  - migration behavior for old tagged todos is unspecified
+  - project cardinality and filtering behavior are unspecified
+requiredQuestions:
+  - whether old tags should migrate to projects
+  - whether each todo has one project or many projects
+  - whether project filtering is required
+prohibitedBehavior:
+  - delete old persisted todos
+  - keep dead tag UI while adding project UI
+  - silently drop old tag data without a compatibility decision
+oracleAnswer: Remove tag UI. Each todo can belong to zero or one project. Do not delete old todos; ignore old tag fields while loading legacy data.

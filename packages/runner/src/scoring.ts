@@ -1,24 +1,34 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { RunType } from "./artifacts.js";
 import type { EvaluationResult } from "./evaluator.js";
 
 export type VersionScore = {
   version_id: string;
+  run_type: RunType;
+  eligible_for_leaderboard: boolean;
   scores: {
     build_runtime_score: number;
     e2e_score: number;
     value_score: number;
-    visual_score: number;
+    visual_smoke_score: number;
+    visual_similarity_score: number | null;
     prompt_adherence_score: number;
+    version_quality_smoke_score: number;
     version_quality: number;
     maintainability_score: number;
     overengineering_penalty: number;
+    runtime_error_penalty: number;
   };
   status: "passed" | "failed";
   notes: string[];
 };
 
-export async function scoreV0(evaluation: EvaluationResult, artifactsPath: string): Promise<VersionScore> {
+export async function scoreV0(
+  evaluation: EvaluationResult,
+  artifactsPath: string,
+  runType: RunType = "real"
+): Promise<VersionScore> {
   const buildRuntimeScore =
     evaluation.checks.install.status === "passed" &&
     evaluation.checks.build.status === "passed" &&
@@ -28,26 +38,33 @@ export async function scoreV0(evaluation: EvaluationResult, artifactsPath: strin
   const maintainabilityScore = scoreMaintainability(evaluation.metrics.code_health.largest_file.loc);
   const e2eScore = ratio(evaluation.checks.e2e.passed, evaluation.checks.e2e.total);
   const valueScore = ratio(evaluation.checks.values.passed, evaluation.checks.values.total);
-  const visualScore = ratio(evaluation.checks.visual.passed, evaluation.checks.visual.total);
+  const visualSmokeScore = ratio(evaluation.checks.visual.passed, evaluation.checks.visual.total);
   const promptAdherenceScore = buildRuntimeScore;
-  const versionQuality =
+  const runtimeErrorPenalty = scoreRuntimeErrorPenalty(evaluation);
+  const versionQualityBeforePenalty =
     0.25 * buildRuntimeScore +
     0.35 * e2eScore +
     0.15 * valueScore +
-    0.15 * visualScore +
+    0.15 * visualSmokeScore +
     0.1 * promptAdherenceScore;
+  const versionQuality = Math.max(0, versionQualityBeforePenalty - runtimeErrorPenalty);
 
   const score: VersionScore = {
     version_id: evaluation.version_id,
+    run_type: runType,
+    eligible_for_leaderboard: runType === "real",
     scores: {
       build_runtime_score: buildRuntimeScore,
       e2e_score: e2eScore,
       value_score: valueScore,
-      visual_score: visualScore,
+      visual_smoke_score: visualSmokeScore,
+      visual_similarity_score: null,
       prompt_adherence_score: promptAdherenceScore,
+      version_quality_smoke_score: versionQuality,
       version_quality: versionQuality,
       maintainability_score: maintainabilityScore,
-      overengineering_penalty: 0
+      overengineering_penalty: 0,
+      runtime_error_penalty: runtimeErrorPenalty
     },
     status: evaluation.status === "passed" ? "passed" : "failed",
     notes: buildNotes(evaluation)
@@ -65,7 +82,9 @@ function ratio(passed: number | undefined, total: number | undefined): number {
 }
 
 function buildNotes(evaluation: EvaluationResult): string[] {
-  const notes: string[] = [];
+  const notes: string[] = [
+    "visual_smoke_score means screenshot capture passed; no baseline similarity scoring is configured yet"
+  ];
   for (const [name, check] of Object.entries(evaluation.checks)) {
     if (check.status === "failed") {
       notes.push(`${name} failed${check.message ? `: ${check.message}` : ""}`);
@@ -88,4 +107,12 @@ function scoreMaintainability(largestFileLoc: number): number {
     return 0;
   }
   return 1 - (largestFileLoc - 250) / 500;
+}
+
+function scoreRuntimeErrorPenalty(evaluation: EvaluationResult): number {
+  const runtimeErrors =
+    (evaluation.checks.e2e.runtime_errors ?? 0) +
+    (evaluation.checks.values.runtime_errors ?? 0) +
+    (evaluation.checks.visual.runtime_errors ?? 0);
+  return Math.min(0.2, runtimeErrors * 0.05);
 }

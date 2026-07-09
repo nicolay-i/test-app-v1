@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { runCommand, type CommandResult } from "./command.js";
 import { ensureDir, pathExists } from "./fs.js";
 import { collectMetrics, type MetricSnapshot } from "./metrics.js";
 import { parseSimpleYaml } from "./simpleYaml.js";
+import { loadTaskEvolution } from "./task.js";
 
 type CheckStatus = "passed" | "failed" | "skipped";
 
@@ -16,6 +17,7 @@ type BasicCheck = {
   passed?: number;
   failed?: number;
   total?: number;
+  runtime_errors?: number;
   report_path?: string;
 };
 
@@ -45,6 +47,7 @@ export type EvaluateOptions = {
   buildTimeoutMs?: number;
   runtimeTimeoutMs?: number;
   playwrightTimeoutMs?: number;
+  evolutionStepIndex?: number | undefined;
 };
 
 export async function evaluateWorkspace(options: EvaluateOptions): Promise<EvaluationResult> {
@@ -79,7 +82,7 @@ export async function evaluateWorkspace(options: EvaluateOptions): Promise<Evalu
     build.status !== "passed"
       ? skippedCheck("Runtime smoke skipped because build did not pass.")
       : await runRuntimeSmoke(options.workspacePath, options.artifactsPath, options.runtimeTimeoutMs ?? 60000);
-  const taskChecks = await loadTaskChecks(process.cwd(), options.taskId);
+  const taskChecks = await loadTaskChecks(process.cwd(), options.taskId, options.evolutionStepIndex);
   const e2e =
     runtimeSmoke.status !== "passed"
       ? skippedCheck("E2E skipped because runtime smoke did not pass.")
@@ -140,13 +143,20 @@ type TaskChecks = {
   visual: string[];
 };
 
-async function loadTaskChecks(rootDir: string, taskId: string): Promise<TaskChecks> {
+async function loadTaskChecks(rootDir: string, taskId: string, evolutionStepIndex?: number): Promise<TaskChecks> {
   const taskDir = path.join(rootDir, "tasks", taskId);
   const taskYaml = parseSimpleYaml(await readFile(path.join(taskDir, "task.yaml"), "utf8"));
   const checks = asRecord(taskYaml.checks);
+  const evolution = await loadTaskEvolution(taskDir);
+  const activeEvolutionSteps = evolutionStepIndex === undefined ? [] : evolution.slice(0, Math.max(0, evolutionStepIndex + 1));
+  const disabledEvolutionTests = new Set(activeEvolutionSteps.flatMap((step) => step.disabledTests));
+  const evolutionTests = activeEvolutionSteps
+    .flatMap((step) => step.tests)
+    .filter((item) => !disabledEvolutionTests.has(item))
+    .map((item) => path.join(taskDir, item));
 
   return {
-    e2e: readPathArray(checks.e2e).map((item) => path.join(taskDir, item)),
+    e2e: [...readPathArray(checks.e2e).map((item) => path.join(taskDir, item)), ...evolutionTests],
     values: readPathArray(checks.values).map((item) => path.join(taskDir, item)),
     visual: readPathArray(checks.visual).map((item) => path.join(taskDir, item))
   };
@@ -160,15 +170,18 @@ function readPathArray(value: unknown): string[] {
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function commandCheck(result: CommandResult): BasicCheck {
+  const output = [result.stdout, result.stderr].join("\n").trim();
   return {
     status: result.exitCode === 0 ? "passed" : "failed",
     duration_ms: result.durationMs,
     log_path: result.logPath,
-    ...(result.exitCode === 0 ? {} : { message: `Command exited with ${result.exitCode}` })
+    ...(result.exitCode === 0
+      ? {}
+      : { message: `Command exited with ${result.exitCode}: ${tail(output, 600)}` })
   };
 }
 
@@ -178,6 +191,13 @@ function skippedCheck(message: string): BasicCheck {
     duration_ms: 0,
     message
   };
+}
+
+function tail(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return value.slice(value.length - maxLength);
 }
 
 async function runRuntimeSmoke(
@@ -204,7 +224,10 @@ async function runRuntimeSmoke(
     server = spawn("pnpm", ["dev", "--host", "127.0.0.1", "--port", String(port)], {
       cwd: workspacePath,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env
+      env: {
+        ...process.env,
+        CI: process.env.CI ?? "true"
+      }
     });
 
     server.stdout?.on("data", (chunk: Buffer) => {
@@ -257,9 +280,11 @@ async function runPlaywrightCheck(options: {
   const reportPath = path.join(categoryDir, "results.json");
   const configPath = path.join(categoryDir, "playwright.config.cjs");
   const serverLogPath = path.join(categoryDir, "dev-server.log");
+  const runtimeCaptureDir = path.join(categoryDir, "runtime-capture");
   await ensureDir(categoryDir);
+  await ensureDir(runtimeCaptureDir);
   await mkdir(workspaceTestDir, { recursive: true });
-  const workspaceTestFiles = await copyTestsIntoWorkspace(options.testPaths, workspaceTestDir);
+  const workspaceTestFiles = await copyTestsIntoWorkspace(options.testPaths, workspaceTestDir, runtimeCaptureDir);
 
   let serverLog = "";
   let server: ChildProcess | undefined;
@@ -270,7 +295,10 @@ async function runPlaywrightCheck(options: {
     server = spawn("pnpm", ["dev", "--host", "127.0.0.1", "--port", String(port)], {
       cwd: options.workspacePath,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env
+      env: {
+        ...process.env,
+        CI: process.env.CI ?? "true"
+      }
     });
     server.stdout?.on("data", (chunk: Buffer) => {
       serverLog += chunk.toString("utf8");
@@ -306,6 +334,7 @@ async function runPlaywrightCheck(options: {
       options.timeoutMs
     );
     const summary = await readPlaywrightSummary(reportPath);
+    const runtimeSummary = await aggregateRuntimeArtifacts(categoryDir, runtimeCaptureDir);
 
     return {
       status: command.exitCode === 0 ? "passed" : "failed",
@@ -315,14 +344,17 @@ async function runPlaywrightCheck(options: {
       passed: summary.passed,
       failed: summary.failed,
       total: summary.total,
+      runtime_errors: runtimeSummary.totalErrors,
       ...(command.exitCode === 0 ? {} : { message: `Playwright ${options.category} exited with ${command.exitCode}` })
     };
   } catch (error) {
+    const runtimeSummary = await aggregateRuntimeArtifacts(categoryDir, runtimeCaptureDir);
     return {
       status: "failed",
       duration_ms: Date.now() - startedAt,
       log_path: path.join(categoryDir, "playwright.log"),
       report_path: reportPath,
+      runtime_errors: runtimeSummary.totalErrors,
       message: error instanceof Error ? error.message : String(error)
     };
   } finally {
@@ -334,14 +366,124 @@ async function runPlaywrightCheck(options: {
   }
 }
 
-async function copyTestsIntoWorkspace(testPaths: string[], workspaceTestDir: string): Promise<string[]> {
+async function copyTestsIntoWorkspace(
+  testPaths: string[],
+  workspaceTestDir: string,
+  runtimeCaptureDir: string
+): Promise<string[]> {
+  await writeFile(path.join(workspaceTestDir, "ape-runtime-capture.ts"), runtimeCaptureSource(runtimeCaptureDir), "utf8");
   const copied: string[] = [];
   for (const testPath of testPaths) {
     const destination = path.join(workspaceTestDir, path.basename(testPath));
-    await writeFile(destination, await readFile(testPath, "utf8"), "utf8");
+    const content = [`import "./ape-runtime-capture";`, await readFile(testPath, "utf8")].join("\n");
+    await writeFile(destination, content, "utf8");
     copied.push(destination);
   }
   return copied;
+}
+
+type RuntimeCaptureRecord = {
+  title: string;
+  consoleErrors: Array<Record<string, string>>;
+  pageErrors: Array<Record<string, string>>;
+  networkFailures: Array<Record<string, string>>;
+};
+
+async function aggregateRuntimeArtifacts(
+  categoryDir: string,
+  runtimeCaptureDir: string
+): Promise<{ totalErrors: number }> {
+  const files = (await readdir(runtimeCaptureDir).catch(() => [])).filter((item) => item.endsWith(".json"));
+  const records: RuntimeCaptureRecord[] = [];
+
+  for (const file of files) {
+    try {
+      records.push(JSON.parse(await readFile(path.join(runtimeCaptureDir, file), "utf8")) as RuntimeCaptureRecord);
+    } catch {
+      // Ignore malformed capture files; the Playwright result is still the source of truth for pass/fail.
+    }
+  }
+
+  const consoleErrors = records.flatMap((record) =>
+    record.consoleErrors.map((error) => ({
+      test: record.title,
+      ...error
+    }))
+  );
+  const pageErrors = records.flatMap((record) =>
+    record.pageErrors.map((error) => ({
+      test: record.title,
+      ...error
+    }))
+  );
+  const networkFailures = records.flatMap((record) =>
+    record.networkFailures.map((failure) => ({
+      test: record.title,
+      ...failure
+    }))
+  );
+  const runtimeSummary = {
+    tests_observed: records.length,
+    console_error_count: consoleErrors.length,
+    page_error_count: pageErrors.length,
+    network_failure_count: networkFailures.length,
+    total_errors: consoleErrors.length + pageErrors.length + networkFailures.length
+  };
+
+  await writeFile(path.join(categoryDir, "console-errors.json"), JSON.stringify(consoleErrors, null, 2), "utf8");
+  await writeFile(path.join(categoryDir, "page-errors.json"), JSON.stringify(pageErrors, null, 2), "utf8");
+  await writeFile(path.join(categoryDir, "network-failures.json"), JSON.stringify(networkFailures, null, 2), "utf8");
+  await writeFile(path.join(categoryDir, "runtime-summary.json"), JSON.stringify(runtimeSummary, null, 2), "utf8");
+
+  return {
+    totalErrors: runtimeSummary.total_errors
+  };
+}
+
+function runtimeCaptureSource(runtimeCaptureDir: string): string {
+  return [
+    `import { test } from "@playwright/test";`,
+    `import { mkdirSync, writeFileSync } from "node:fs";`,
+    `import path from "node:path";`,
+    ``,
+    `const captureDir = ${JSON.stringify(runtimeCaptureDir)};`,
+    `mkdirSync(captureDir, { recursive: true });`,
+    ``,
+    `test.beforeEach(async ({ page }, testInfo) => {`,
+    `  const consoleErrors: Array<Record<string, string>> = [];`,
+    `  const pageErrors: Array<Record<string, string>> = [];`,
+    `  const networkFailures: Array<Record<string, string>> = [];`,
+    ``,
+    `  page.on("console", (message) => {`,
+    `    if (message.type() === "error") {`,
+    `      consoleErrors.push({ type: message.type(), text: message.text(), location: JSON.stringify(message.location()) });`,
+    `    }`,
+    `  });`,
+    `  page.on("pageerror", (error) => {`,
+    `    pageErrors.push({ name: error.name, message: error.message, stack: error.stack ?? "" });`,
+    `  });`,
+    `  page.on("requestfailed", (request) => {`,
+    `    networkFailures.push({ url: request.url(), method: request.method(), failure: request.failure()?.errorText ?? "" });`,
+    `  });`,
+    ``,
+    `  testInfo.attach("ape-runtime-capture-marker", { body: Buffer.from("enabled"), contentType: "text/plain" });`,
+    `  testInfo.annotations.push({ type: "ape-runtime-capture", description: "enabled" });`,
+    ``,
+    `  testInfo._apeRuntimeCapture = { consoleErrors, pageErrors, networkFailures };`,
+    `});`,
+    ``,
+    `test.afterEach(async ({}, testInfo) => {`,
+    `  const capture = testInfo._apeRuntimeCapture ?? { consoleErrors: [], pageErrors: [], networkFailures: [] };`,
+    `  const fileName = testInfo.title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 80) || "test";`,
+    `  const retrySuffix = testInfo.retry ? \`-retry-\${testInfo.retry}\` : "";`,
+    `  writeFileSync(`,
+    `    path.join(captureDir, \`\${fileName}\${retrySuffix}.json\`),`,
+    `    JSON.stringify({ title: testInfo.title, ...capture }, null, 2),`,
+    `    "utf8"`,
+    `  );`,
+    `});`,
+    ``
+  ].join("\n");
 }
 
 async function readPlaywrightSummary(reportPath: string): Promise<{ passed: number; failed: number; total: number }> {

@@ -1,0 +1,14 @@
+id: 02-user-misconception-active-filter
+version: v0
+request: Fix Active filter so it shows completed todos.
+expectedDecision: conflict
+requiredFindings:
+  - Active filter should show incomplete todos
+  - the request conflicts with established TodoMVC behavior
+  - changing this would regress existing acceptance criteria
+requiredQuestions:
+  - confirm whether Active should intentionally replace TodoMVC semantics
+prohibitedBehavior:
+  - silently change Active to show completed todos
+  - remove Completed filter behavior
+oracleAnswer: Keep TodoMVC semantics. Active must show incomplete todos; Completed must show completed todos.

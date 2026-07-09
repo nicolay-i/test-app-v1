@@ -37,6 +37,7 @@ export async function copyDirFiltered(source: string, destination: string): Prom
       const name = path.basename(entry);
       return (
         !["node_modules", "dist", ".git", "coverage", "playwright-report"].includes(name) &&
+        !name.startsWith(".ape-") &&
         !name.endsWith(".tsbuildinfo")
       );
     }

@@ -31,7 +31,10 @@ export async function runCommand(
     const child = spawn(command, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env
+      env: {
+        ...process.env,
+        CI: process.env.CI ?? "true"
+      }
     });
 
     const timeout = setTimeout(() => {

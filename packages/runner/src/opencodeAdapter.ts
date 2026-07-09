@@ -7,6 +7,7 @@ export type OpenCodeRunRequest = {
   model: string;
   cwd: string;
   prompt: string;
+  promptPath?: string;
   title: string;
   artifactsPath: string;
   format?: "json" | "default";
@@ -47,7 +48,11 @@ export async function runOpenCode(request: OpenCodeRunRequest): Promise<OpenCode
     args.push("--auto");
   }
 
-  args.push(request.prompt);
+  args.push("Read the attached benchmark prompt and implement the requested app.");
+
+  if (request.promptPath) {
+    args.push("--file", request.promptPath);
+  }
 
   let stdout = "";
   let stderr = "";

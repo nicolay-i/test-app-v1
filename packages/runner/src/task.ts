@@ -11,6 +11,33 @@ export type TaskValidationResult = {
   warnings: string[];
 };
 
+export type TaskEvolutionStep = {
+  id: string;
+  prompt: string;
+  tests: string[];
+  disabledTests: string[];
+};
+
+export async function loadTaskEvolution(taskDir: string): Promise<TaskEvolutionStep[]> {
+  const parsed = parseSimpleYaml(await readFile(path.join(taskDir, "task.yaml"), "utf8"));
+  const evolution = parsed.evolution;
+  if (!Array.isArray(evolution)) {
+    return [];
+  }
+
+  return evolution
+    .filter(isRecord)
+    .map((step) => ({
+      id: typeof step.id === "string" ? step.id : "",
+      prompt: typeof step.prompt === "string" ? step.prompt : "",
+      tests: Array.isArray(step.tests) ? step.tests.filter((item): item is string => typeof item === "string") : [],
+      disabledTests: Array.isArray(step.disabledTests)
+        ? step.disabledTests.filter((item): item is string => typeof item === "string")
+        : []
+    }))
+    .filter((step) => step.id.length > 0 && step.prompt.length > 0);
+}
+
 export async function validateTask(taskDir: string): Promise<TaskValidationResult> {
   const taskYamlPath = path.join(taskDir, "task.yaml");
   const errors: string[] = [];
@@ -147,6 +174,17 @@ function validateEvolution(
     } else {
       for (const testPath of tests) {
         addMissingPathError(path.join(taskDir, testPath), errors);
+      }
+    }
+
+    const disabledTests = step.disabledTests;
+    if (disabledTests !== undefined) {
+      if (!Array.isArray(disabledTests) || disabledTests.some((item) => typeof item !== "string")) {
+        errors.push(`Evolution step "${id ?? index}" disabledTests must be a string array`);
+      } else {
+        for (const testPath of disabledTests) {
+          addMissingPathError(path.join(taskDir, testPath), errors);
+        }
       }
     }
   }

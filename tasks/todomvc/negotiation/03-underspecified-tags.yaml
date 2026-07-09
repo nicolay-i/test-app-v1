@@ -1,0 +1,18 @@
+id: 03-underspecified-tags
+version: v2
+request: Add tags to todos.
+expectedDecision: clarify
+requiredFindings:
+  - tags affect the todo data model
+  - tags affect create/edit UI
+  - tags affect persistence
+  - filtering behavior is unspecified
+requiredQuestions:
+  - single vs multiple tags
+  - predefined vs custom tags
+  - whether filtering by tag is required
+prohibitedBehavior:
+  - silently add decorative tags only
+  - duplicate todo state model
+  - hard-code tag logic separately in multiple views
+oracleAnswer: Todos can have zero or more tags. Use predefined tags Work, Personal, Urgent. Users can filter by one tag at a time.

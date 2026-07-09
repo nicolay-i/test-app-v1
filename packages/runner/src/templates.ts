@@ -84,7 +84,28 @@ promptArms:
 scoring:
   weights: scoring/weights.yaml
 
-evolution: []
+evolution:
+  - id: 01-add-due-dates
+    prompt: evolution/01-add-due-dates.md
+    tests:
+      - tests/evolution/01-due-dates.spec.ts
+
+  - id: 02-add-search
+    prompt: evolution/02-add-search.md
+    tests:
+      - tests/evolution/02-search.spec.ts
+
+  - id: 03-add-tags
+    prompt: evolution/03-add-tags.md
+    tests:
+      - tests/evolution/03-tags.spec.ts
+
+  - id: 04-remove-tags
+    prompt: evolution/04-remove-tags.md
+    tests:
+      - tests/evolution/04-remove-tags.spec.ts
+    disabledTests:
+      - tests/evolution/03-tags.spec.ts
 `;
 
 export const todoMvcTaskYaml = `id: todomvc
@@ -262,6 +283,250 @@ test("captures TodoMVC desktop shell", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /todos/i })).toBeVisible();
   await page.screenshot({ fullPage: true });
+});
+`;
+
+export const todoMvcEvolutionDueDatesPrompt = `Add optional due dates to todos.
+
+Requirements:
+- User can create a todo without a due date.
+- User can assign a due date while editing a todo.
+- Due date is visible on the todo row.
+- Overdue active todos are visually distinguishable.
+- Due dates persist after refresh.
+- Existing TodoMVC behavior must keep working.
+`;
+
+export const todoMvcEvolutionSearchPrompt = `Add search by todo title.
+
+Requirements:
+- Search filters visible todos by title.
+- Search works together with All / Active / Completed filters.
+- Clearing search restores the current filter view.
+- Search does not delete or mutate todos.
+- Existing due date behavior must keep working.
+`;
+
+export const todoMvcEvolutionTagsPrompt = `Add tags to todos.
+
+Requirements:
+- Todo can have zero or more tags.
+- Use predefined tags: Work, Personal, Urgent.
+- User can edit tags for an existing todo.
+- User can filter by one tag at a time.
+- Tags persist after refresh.
+- Existing search, due dates, and TodoMVC behavior must keep working.
+`;
+
+export const todoMvcEvolutionRemoveTagsPrompt = `Remove the tags feature completely.
+
+Requirements:
+- Remove tag UI from create/edit flows.
+- Remove tag filter UI.
+- Existing todos should still load even if old persisted data contains tags.
+- Search, due dates, filters, editing, completion, deletion, and persistence must keep working.
+- Remove dead tag-related code where practical.
+`;
+
+export const todoMvcEvolutionDueDatesSpec = `import { expect, test } from "@playwright/test";
+
+async function addTodo(page: import("@playwright/test").Page, title: string) {
+  const input = page.getByRole("textbox", { name: /new todo|what needs to be done/i });
+  await input.fill(title);
+  await input.press("Enter");
+}
+
+async function dueDateInput(page: import("@playwright/test").Page) {
+  const byLabel = page.getByLabel(/due date/i);
+  if ((await byLabel.count()) > 0) {
+    return byLabel.first();
+  }
+  return page.locator('input[type="date"]').first();
+}
+
+function todoRow(page: import("@playwright/test").Page, title: string) {
+  return page.locator("li").filter({ has: page.getByText(title, { exact: true }) });
+}
+
+test("creates todos with and without due dates", async ({ page }) => {
+  await page.goto("/");
+
+  await addTodo(page, "No due date task");
+  await expect(page.getByText("No due date task")).toBeVisible();
+
+  const dueDate = await dueDateInput(page);
+  await dueDate.fill("2026-08-15");
+  await addTodo(page, "Due date task");
+
+  const row = todoRow(page, "Due date task");
+  await expect(row).toContainText(/2026-08-15|Aug 15,? 2026|8\\/15\\/2026|15\\.08\\.2026/);
+});
+
+test("due dates persist and overdue active todos are marked", async ({ page }) => {
+  await page.goto("/");
+
+  const dueDate = await dueDateInput(page);
+  await dueDate.fill("2000-01-01");
+  await addTodo(page, "Overdue task");
+  await page.reload();
+
+  const row = todoRow(page, "Overdue task");
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(/2000-01-01|Jan 1,? 2000|1\\/1\\/2000|01\\.01\\.2000/);
+  await expect(row).toHaveClass(/overdue|late|past-due/);
+});
+`;
+
+export const todoMvcEvolutionSearchSpec = `import { expect, test } from "@playwright/test";
+
+async function addTodo(page: import("@playwright/test").Page, title: string) {
+  const input = page.getByRole("textbox", { name: /new todo|what needs to be done/i });
+  await input.fill(title);
+  await input.press("Enter");
+}
+
+async function searchInput(page: import("@playwright/test").Page) {
+  const input = page.getByRole("searchbox", { name: /search/i });
+  if ((await input.count()) > 0) {
+    return input.first();
+  }
+  return page.getByRole("textbox", { name: /search/i }).first();
+}
+
+async function clickFilter(page: import("@playwright/test").Page, name: string) {
+  const link = page.getByRole("link", { name: new RegExp(\`^\${name}$\`, "i") });
+  if ((await link.count()) > 0) {
+    await link.click();
+    return;
+  }
+  await page.getByRole("button", { name: new RegExp(\`^\${name}$\`, "i") }).click();
+}
+
+test("search filters todos by title without mutating them", async ({ page }) => {
+  await page.goto("/");
+
+  await addTodo(page, "Write benchmark report");
+  await addTodo(page, "Buy milk");
+
+  const search = await searchInput(page);
+  await search.fill("benchmark");
+  await expect(page.getByText("Write benchmark report")).toBeVisible();
+  await expect(page.getByText("Buy milk")).toBeHidden();
+
+  await search.fill("");
+  await expect(page.getByText("Write benchmark report")).toBeVisible();
+  await expect(page.getByText("Buy milk")).toBeVisible();
+});
+
+test("search composes with active and completed filters", async ({ page }) => {
+  await page.goto("/");
+
+  await addTodo(page, "Active search target");
+  await addTodo(page, "Completed search target");
+  await page.locator("li").filter({ hasText: "Completed search target" }).getByRole("checkbox").check();
+
+  const search = await searchInput(page);
+  await search.fill("search target");
+
+  await clickFilter(page, "Active");
+  await expect(page.getByText("Active search target")).toBeVisible();
+  await expect(page.getByText("Completed search target")).toBeHidden();
+
+  await clickFilter(page, "Completed");
+  await expect(page.getByText("Completed search target")).toBeVisible();
+  await expect(page.getByText("Active search target")).toBeHidden();
+});
+`;
+
+export const todoMvcEvolutionTagsSpec = `import { expect, test } from "@playwright/test";
+
+async function addTodo(page: import("@playwright/test").Page, title: string) {
+  const input = page.getByRole("textbox", { name: /new todo|what needs to be done/i });
+  await input.fill(title);
+  await input.press("Enter");
+}
+
+async function setTag(page: import("@playwright/test").Page, tag: string) {
+  const checkbox = page.getByRole("checkbox", { name: new RegExp(tag, "i") });
+  if ((await checkbox.count()) > 0) {
+    await checkbox.first().check();
+    return;
+  }
+  const select = page.getByLabel(/tag/i);
+  if ((await select.count()) > 0) {
+    await select.first().selectOption(new RegExp(tag, "i"));
+    return;
+  }
+  await page.getByRole("button", { name: new RegExp(tag, "i") }).first().click();
+}
+
+async function filterByTag(page: import("@playwright/test").Page, tag: string) {
+  const control = page.getByRole("button", { name: new RegExp(tag, "i") });
+  if ((await control.count()) > 0) {
+    await control.last().click();
+    return;
+  }
+  await page.getByRole("link", { name: new RegExp(tag, "i") }).last().click();
+}
+
+test("adds tags and filters by one tag", async ({ page }) => {
+  await page.goto("/");
+
+  await setTag(page, "Work");
+  await addTodo(page, "Prepare release");
+  await setTag(page, "Personal");
+  await addTodo(page, "Call dentist");
+
+  await expect(page.locator("li").filter({ hasText: "Prepare release" })).toContainText(/work/i);
+  await expect(page.locator("li").filter({ hasText: "Call dentist" })).toContainText(/personal/i);
+
+  await filterByTag(page, "Work");
+  await expect(page.getByText("Prepare release")).toBeVisible();
+  await expect(page.getByText("Call dentist")).toBeHidden();
+});
+
+test("tags persist after refresh", async ({ page }) => {
+  await page.goto("/");
+
+  await setTag(page, "Urgent");
+  await addTodo(page, "Pay invoice");
+  await page.reload();
+
+  const row = page.locator("li").filter({ hasText: "Pay invoice" });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(/urgent/i);
+});
+`;
+
+export const todoMvcEvolutionRemoveTagsSpec = `import { expect, test } from "@playwright/test";
+
+test("tag UI is removed while core controls remain", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByRole("textbox", { name: /new todo|what needs to be done/i })).toBeVisible();
+  await expect(page.getByText(/work|personal|urgent/i)).toHaveCount(0);
+  await expect(page.getByLabel(/tag/i)).toHaveCount(0);
+});
+
+test("legacy persisted todos with tags still load", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "todos",
+      JSON.stringify([
+        {
+          id: "legacy-1",
+          title: "Legacy tagged todo",
+          completed: false,
+          dueDate: "2026-08-15",
+          tags: ["Work", "Urgent"]
+        }
+      ])
+    );
+  });
+  await page.goto("/");
+
+  await expect(page.getByText("Legacy tagged todo")).toBeVisible();
+  await expect(page.getByText(/work|urgent/i)).toHaveCount(0);
 });
 `;
 
