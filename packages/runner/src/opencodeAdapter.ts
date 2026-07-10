@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { copyFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ensureDir } from "./fs.js";
 import { parseOpenCodeEvents, type ParsedOpenCodeResult } from "./opencodeEventParser.js";
@@ -14,6 +14,7 @@ export type OpenCodeRunRequest = {
   format?: "json" | "default";
   autoApprove?: boolean;
   timeoutMs?: number;
+  maxAttempts?: number;
 };
 
 export type OpenCodeRunResult = {
@@ -26,10 +27,42 @@ export type OpenCodeRunResult = {
   resultPath: string;
   assistantResponsePath: string;
   parsed: ParsedOpenCodeResult;
+  attempts: Array<{ attempt: number; ok: boolean; durationMs: number; artifactsPath: string }>;
   error?: string;
 };
 
 export async function runOpenCode(request: OpenCodeRunRequest): Promise<OpenCodeRunResult> {
+  const maxAttempts = Math.max(1, request.maxAttempts ?? 2);
+  const attempts: OpenCodeRunResult["attempts"] = [];
+  let result: Omit<OpenCodeRunResult, "attempts"> | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const artifactsPath = path.join(request.artifactsPath, "opencode-attempts", `attempt-${attempt}`);
+    result = await runSingleOpenCode({ ...request, artifactsPath });
+    attempts.push({ attempt, ok: result.ok, durationMs: result.durationMs, artifactsPath });
+    if (result.ok || attempt === maxAttempts) break;
+  }
+  if (!result) throw new Error("OpenCode attempt was not started");
+  await ensureDir(request.artifactsPath);
+  await Promise.all([
+    copyFile(result.stdoutPath, path.join(request.artifactsPath, "opencode.stdout.log")),
+    copyFile(result.stderrPath, path.join(request.artifactsPath, "opencode.stderr.log")),
+    copyFile(result.eventsPath, path.join(request.artifactsPath, "opencode.events.jsonl")),
+    copyFile(result.resultPath, path.join(request.artifactsPath, "opencode-result.json")),
+    copyFile(result.assistantResponsePath, path.join(request.artifactsPath, "assistant-response.md"))
+  ]);
+  await writeFile(path.join(request.artifactsPath, "opencode-attempts.json"), JSON.stringify({ max_attempts: maxAttempts, attempts }, null, 2), "utf8");
+  return {
+    ...result,
+    stdoutPath: path.join(request.artifactsPath, "opencode.stdout.log"),
+    stderrPath: path.join(request.artifactsPath, "opencode.stderr.log"),
+    eventsPath: path.join(request.artifactsPath, "opencode.events.jsonl"),
+    resultPath: path.join(request.artifactsPath, "opencode-result.json"),
+    assistantResponsePath: path.join(request.artifactsPath, "assistant-response.md"),
+    attempts
+  };
+}
+
+async function runSingleOpenCode(request: OpenCodeRunRequest): Promise<Omit<OpenCodeRunResult, "attempts">> {
   await ensureDir(request.artifactsPath);
 
   const stdoutPath = path.join(request.artifactsPath, "opencode.stdout.log");

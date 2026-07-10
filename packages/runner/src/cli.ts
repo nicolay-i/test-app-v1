@@ -991,6 +991,7 @@ async function runMockOpenCode(
   const assistantResponsePath = path.join(artifactsPath, "assistant-response.md");
   await writeFile(resultPath, JSON.stringify(parsed, null, 2), "utf8");
   await writeFile(assistantResponsePath, parsed.assistantText, "utf8");
+  await writeFile(path.join(artifactsPath, "opencode-attempts.json"), JSON.stringify({ max_attempts: 1, attempts: [{ attempt: 1, ok: !fail, durationMs: Date.now() - startedAt, artifactsPath }] }, null, 2), "utf8");
   return {
     ok: !fail,
     exitCode: fail ? null : 0,
@@ -1001,6 +1002,7 @@ async function runMockOpenCode(
     resultPath,
     assistantResponsePath,
     parsed,
+    attempts: [{ attempt: 1, ok: !fail, durationMs: Date.now() - startedAt, artifactsPath }],
     ...(fail ? { error: profile === "timeout-v0" ? `Timed out after mock profile ${profile}` : `mock profile ${profile} failed ${versionId}` } : {})
   };
 }

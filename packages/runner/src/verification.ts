@@ -52,7 +52,7 @@ export async function verifyExecution(executionPath: string): Promise<Verificati
     if (summary.run_type !== manifest.run_type) errors.push(`${trajectory.name}: run_type differs from execution`);
     for (const version of summary.versions ?? []) {
       const versionPath = path.join(trajectoryPath, version.version_id);
-      const required = ["prompt.md", "run-metadata.json", "opencode.stdout.log", "opencode.stderr.log", "opencode.events.jsonl", "opencode-result.json", "assistant-response.md", "git.diff", "failure-summary.json", "report.md"];
+      const required = ["prompt.md", "run-metadata.json", "opencode.stdout.log", "opencode.stderr.log", "opencode.events.jsonl", "opencode-result.json", "opencode-attempts.json", "assistant-response.md", "git.diff", "failure-summary.json", "report.md"];
       for (const name of required) if (!(await pathExists(path.join(versionPath, name)))) errors.push(`${trajectory.name}/${version.version_id}: missing ${name}`); else files += 1;
       if (version.status !== "passed" && !(await pathExists(path.join(versionPath, "failure-summary.json")))) errors.push(`${trajectory.name}/${version.version_id}: failed version has no failure summary`);
       const metadataPath = path.join(versionPath, "run-metadata.json");
