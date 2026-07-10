@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "status": "planned",
+  "config": "configs/r2-ab-u3-vs-u5.yaml",
+  "task": "todomvc",
+  "model": "deepseek-v4-flash-free",
+  "system_prompt": "S2-maintainable-simple",
+  "arms": ["U3-semantic-ui", "U5-maintainable"],
+  "runs_per_arm": 3,
+  "versions": ["v0", "v1", "v2"],
+  "randomized_order": true,
+  "seed": 20260710,
+  "eligible_run_type": "real"
+}

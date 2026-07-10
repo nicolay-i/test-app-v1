@@ -1,0 +1,17 @@
+tests:
+  base/e2e.spec.ts:create-todo:
+    requirements: [create-todo]
+    observableBehavior: true
+    implementationAssumptions: []
+  base/e2e.spec.ts:filters-and-completion:
+    requirements: [filters-and-completion]
+    observableBehavior: true
+    implementationAssumptions: []
+  base/values.spec.ts:persistence:
+    requirements: [persistence]
+    observableBehavior: true
+    implementationAssumptions: []
+  base/visual.spec.ts:semantic-ui:
+    requirements: [semantic-ui]
+    observableBehavior: true
+    implementationAssumptions: [TodoMVC heading]

@@ -8,7 +8,8 @@
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty",
     "lint": "tsc -b --pretty",
-    "proof:mock": "bash scripts/proof-mock.sh"
+    "proof:mock": "bash scripts/proof-mock.sh",
+    "proof:fairness": "bash scripts/proof-fairness.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

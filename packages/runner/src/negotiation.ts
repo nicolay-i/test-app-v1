@@ -62,9 +62,10 @@ export async function runNegotiationPreflight(options: {
   opencodeFormat: "json" | "default";
   autoApprove: boolean;
   timeoutMs: number;
+  currentAppContext?: string;
 }): Promise<{ decision: AgentDecision; score: NegotiationScore }> {
   await ensureDir(options.artifactsPath);
-  const prompt = buildDecisionPrompt(options.scenario);
+  const prompt = buildDecisionPrompt(options.scenario, options.currentAppContext);
   const promptPath = path.join(options.artifactsPath, "prompt.md");
   await writeFile(promptPath, prompt, "utf8");
 
@@ -101,7 +102,7 @@ export async function runNegotiationPreflight(options: {
   };
 }
 
-function buildDecisionPrompt(scenario: NegotiationScenario): string {
+function buildDecisionPrompt(scenario: NegotiationScenario, currentAppContext?: string): string {
   return [
     "# Requirements Negotiation Preflight",
     "",
@@ -122,8 +123,8 @@ function buildDecisionPrompt(scenario: NegotiationScenario): string {
     '  "will_edit": false',
     "}",
     "",
-    "## Current App",
-    "TodoMVC lifecycle app with create, complete, edit, delete, filters and localStorage persistence.",
+    "## Current App Snapshot",
+    currentAppContext ?? "TodoMVC lifecycle app with create, complete, edit, delete, filters and localStorage persistence.",
     "",
     "## Scenario",
     `Scenario id: ${scenario.id}`,

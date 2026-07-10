@@ -9,8 +9,38 @@ export async function verifyExecution(executionPath: string): Promise<Verificati
   const errors: string[] = [];
   const manifestPath = path.join(executionPath, "execution-manifest.json");
   if (!(await pathExists(manifestPath))) return { ok: false, errors: ["missing execution-manifest.json"], files: 0 };
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { execution_id?: string; run_type?: string };
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    execution_id?: string;
+    run_type?: string;
+    repo_dirty?: boolean;
+    runner_source_hash?: string;
+    package_json_hash?: string | null;
+    lockfile_hash?: string | null;
+    working_tree_patch_sha256?: string | null;
+    reproducible_from_commit_only?: boolean;
+    eligible_for_published_results?: boolean;
+  };
   if (!manifest.execution_id || !manifest.run_type) errors.push("invalid execution manifest identity");
+  if (manifest.repo_dirty === undefined) {
+    errors.push("legacy execution manifest: provenance fields are missing");
+  } else {
+    if (!manifest.runner_source_hash || !manifest.package_json_hash || !manifest.lockfile_hash) errors.push("execution manifest has incomplete runner provenance");
+    if (manifest.repo_dirty) {
+      const patchPath = path.join(executionPath, "source.patch");
+      const patchHashPath = path.join(executionPath, "source.patch.sha256");
+      if (!(await pathExists(patchPath)) || !(await pathExists(patchHashPath))) {
+        errors.push("dirty execution is missing source patch artifacts");
+      } else {
+        const patch = await readFile(patchPath);
+        const actualHash = createHash("sha256").update(patch).digest("hex");
+        const recordedHash = (await readFile(patchHashPath, "utf8")).trim();
+        if (actualHash !== manifest.working_tree_patch_sha256 || actualHash !== recordedHash) errors.push("source patch hash differs from execution manifest");
+      }
+      if (manifest.reproducible_from_commit_only !== false || manifest.eligible_for_published_results !== false) errors.push("dirty execution has invalid publication eligibility");
+    } else if (manifest.working_tree_patch_sha256 !== null || manifest.reproducible_from_commit_only !== true) {
+      errors.push("clean execution has inconsistent dirty-tree provenance");
+    }
+  }
   const artifactsRoot = path.join(executionPath, "artifacts");
   const trajectories = await readdir(artifactsRoot, { withFileTypes: true }).catch(() => []);
   let files = 0;

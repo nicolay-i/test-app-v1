@@ -1,0 +1,5 @@
+id: intentionally-broken-c
+mockProfile: intentionally-broken
+expected: fail
+expectedFailedCriterion: completed-filter
+description: Намеренно нарушает фильтр Completed, оставляя поведение остальных контролов неизменным.

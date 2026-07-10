@@ -34,7 +34,16 @@ export type EvaluationResult = {
     values: BasicCheck;
     visual: BasicCheck;
   };
+  requirement_adherence: RequirementAdherence;
   metrics: MetricSnapshot;
+};
+
+export type RequirementAdherence = {
+  requirement_adherence_score: number | null;
+  requirements_passed: number;
+  requirements_total: number;
+  critical_requirements_failed: string[];
+  requirements: Array<{ id: string; type: string; weight: number; critical: boolean; check: "e2e" | "values" | "visual"; status: CheckStatus; passed: boolean }>;
 };
 
 export type EvaluateOptions = {
@@ -114,6 +123,7 @@ export async function evaluateWorkspace(options: EvaluateOptions): Promise<Evalu
           timeoutMs: options.playwrightTimeoutMs ?? 120000
         });
   const metrics = await collectMetrics(options.workspacePath, options.versionId, options.artifactsPath);
+  const requirementAdherence = await evaluateRequirementAdherence(process.cwd(), options.taskId, { e2e, values, visual });
 
   const result: EvaluationResult = {
     version_id: options.versionId,
@@ -130,11 +140,38 @@ export async function evaluateWorkspace(options: EvaluateOptions): Promise<Evalu
       values,
       visual
     },
+    requirement_adherence: requirementAdherence,
     metrics
   };
 
   await writeFile(path.join(options.artifactsPath, "check-results.json"), JSON.stringify(result, null, 2), "utf8");
+  await writeFile(path.join(options.artifactsPath, "requirement-adherence.json"), JSON.stringify(requirementAdherence, null, 2), "utf8");
   return result;
+}
+
+async function evaluateRequirementAdherence(rootDir: string, taskId: string, checks: Pick<EvaluationResult["checks"], "e2e" | "values" | "visual">): Promise<RequirementAdherence> {
+  const parsed = parseSimpleYaml(await readFile(path.join(rootDir, "tasks", taskId, "task.yaml"), "utf8"));
+  const definitions = Array.isArray(parsed.requirements) ? parsed.requirements.filter(asRecord) : [];
+  const requirements = definitions.flatMap((definition) => {
+    const id = typeof definition.id === "string" ? definition.id : "";
+    const type = typeof definition.type === "string" ? definition.type : "unknown";
+    const weight = typeof definition.weight === "number" && definition.weight > 0 ? definition.weight : 1;
+    const critical = definition.critical === true;
+    const check: keyof typeof checks = definition.check === "values" || definition.check === "visual" ? definition.check : "e2e";
+    if (!id) return [];
+    const result = checks[check];
+    const passed = result.status === "passed" && (result.total === undefined || result.total === 0 || (result.passed ?? 0) === result.total);
+    return [{ id, type, weight, critical, check, status: result.status, passed }];
+  });
+  const totalWeight = requirements.reduce((total, requirement) => total + requirement.weight, 0);
+  const passedWeight = requirements.filter((requirement) => requirement.passed).reduce((total, requirement) => total + requirement.weight, 0);
+  return {
+    requirement_adherence_score: requirements.length === 0 ? null : passedWeight / totalWeight,
+    requirements_passed: requirements.filter((requirement) => requirement.passed).length,
+    requirements_total: requirements.length,
+    critical_requirements_failed: requirements.filter((requirement) => requirement.critical && !requirement.passed).map((requirement) => requirement.id),
+    requirements
+  };
 }
 
 type TaskChecks = {

@@ -1,0 +1,4 @@
+id: compliant-alternative-dom-b
+mockProfile: alternative-dom
+expected: pass
+description: Корректная реализация с другой DOM-оболочкой, class names и ключом localStorage.

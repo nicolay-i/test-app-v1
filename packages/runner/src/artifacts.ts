@@ -3,6 +3,7 @@ import path from "node:path";
 import type { EvaluationResult } from "./evaluator.js";
 import type { VersionScore } from "./scoring.js";
 import type { TrajectoryPlan } from "./types.js";
+import type { AgentUsage } from "./opencodeEventParser.js";
 
 export type RunType = "mock" | "real";
 
@@ -66,6 +67,9 @@ export type TrajectoryVersionSummary = {
   loc_total: number | null;
   largest_file_loc: number | null;
   diff: DiffMetrics;
+  generation_usage: AgentUsage;
+  repair_usage: AgentUsage[];
+  version_total_usage: AgentUsage;
   artifacts_path: string;
 };
 
@@ -86,13 +90,16 @@ export type TrajectorySummary = {
   repair_attempts_total: number;
   repair_successes_total: number;
   total_tokens: number | null;
+  lifecycle_usage: AgentUsage;
+  lifecycle_reported_cost: number | null;
   survival_rate: number;
   regression_free_versions: number;
   repair_free_versions: number;
   quality_degradation_slope: number | null;
   lifecycle_tokens: number | null;
   tokens_per_passing_version: number | null;
-  usage_complete: false;
+  usage_complete: boolean;
+  tokens_per_attempted_version: number | null;
   total_latency_ms: number;
   total_files_touched: number;
   total_lines_added: number;
@@ -100,6 +107,9 @@ export type TrajectorySummary = {
   largest_file_growth: number;
   loc_growth: number;
   score_by_version: Record<string, number | null>;
+  repair_token_ratio: number | null;
+  successful_versions_per_100k_tokens: number | null;
+  quality_adjusted_survival_per_100k_tokens: number | null;
   versions: TrajectoryVersionSummary[];
 };
 
@@ -127,7 +137,23 @@ export type RepairSummary = {
   failed_checks_after_repair: string[];
   artifacts_path: string;
   prompt_path: string;
+  usage: AgentUsage;
 };
+
+export function unavailableAgentUsage(): AgentUsage {
+  return {
+    status: "unavailable",
+    inputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    totalTokens: null,
+    reportedCost: null,
+    currency: null,
+    source: "unavailable"
+  };
+}
 
 export function buildInitialRunMetadata(options: {
   runType: RunType;
@@ -282,7 +308,9 @@ export async function buildTerminalVersionSummary(options: {
   classification: FailureClassification;
   failedPhase: string;
   artifactsPath: string;
+  generationUsage?: AgentUsage;
 }): Promise<TrajectoryVersionSummary> {
+  const generationUsage = options.generationUsage ?? unavailableAgentUsage();
   return {
     version_id: options.versionId,
     status: "failed",
@@ -296,6 +324,9 @@ export async function buildTerminalVersionSummary(options: {
     loc_total: null,
     largest_file_loc: null,
     diff: await readDiffMetrics(path.join(options.artifactsPath, "git.diff")),
+    generation_usage: generationUsage,
+    repair_usage: [],
+    version_total_usage: generationUsage,
     artifacts_path: options.artifactsPath
   };
 }
@@ -356,6 +387,11 @@ export function buildTrajectorySummary(options: {
   const qualityDegradationSlope = evaluatedScores.length < 2
     ? null
     : linearSlope(evaluatedScores.map((item) => item.index), evaluatedScores.map((item) => item.score));
+  const lifecycleUsage = aggregateUsage(options.versions.flatMap((version) => [version.generation_usage, ...version.repair_usage]));
+  const lifecycleTokens = lifecycleUsage.status === "complete" ? lifecycleUsage.totalTokens : null;
+  const lifecycleReportedCost = lifecycleUsage.status === "complete" ? lifecycleUsage.reportedCost : null;
+  const successfulVersions = options.versions.filter((version) => version.status === "passed").length;
+  const repairUsage = aggregateUsage(options.versions.flatMap((version) => version.repair_usage));
 
   return {
     schema_version: "0.1.0",
@@ -373,14 +409,17 @@ export function buildTrajectorySummary(options: {
     regression_failures_total: regressionFailuresTotal,
     repair_attempts_total: options.versions.reduce((total, version) => total + version.repair_attempts, 0),
     repair_successes_total: options.versions.filter((version) => version.repair_success).length,
-    total_tokens: null,
+    total_tokens: lifecycleTokens,
+    lifecycle_usage: lifecycleUsage,
+    lifecycle_reported_cost: lifecycleReportedCost,
     survival_rate: options.versions.length === 0 ? 0 : countSurvivedEditVersions(options.versions) / Math.max(1, options.versionsRequested),
     regression_free_versions: options.versions.filter((version) => !version.failed_checks.some((check) => check === "e2e" || check === "values")).length,
     repair_free_versions: options.versions.filter((version) => version.repair_attempts === 0).length,
     quality_degradation_slope: qualityDegradationSlope,
-    lifecycle_tokens: null,
-    tokens_per_passing_version: null,
-    usage_complete: false,
+    lifecycle_tokens: lifecycleTokens,
+    tokens_per_passing_version: lifecycleTokens !== null && successfulVersions > 0 ? lifecycleTokens / successfulVersions : null,
+    usage_complete: lifecycleUsage.status === "complete",
+    tokens_per_attempted_version: lifecycleTokens !== null && options.versions.length > 0 ? lifecycleTokens / options.versions.length : null,
     total_latency_ms: options.totalLatencyMs,
     total_files_touched: options.versions.reduce((total, version) => total + version.diff.files_touched, 0),
     total_lines_added: options.versions.reduce((total, version) => total + version.diff.lines_added, 0),
@@ -388,7 +427,35 @@ export function buildTrajectorySummary(options: {
     largest_file_growth: final && baseline && final.largest_file_loc !== null && baseline.largest_file_loc !== null ? final.largest_file_loc - baseline.largest_file_loc : 0,
     loc_growth: final && baseline && final.loc_total !== null && baseline.loc_total !== null ? final.loc_total - baseline.loc_total : 0,
     score_by_version: scoreByVersion,
+    repair_token_ratio: lifecycleTokens !== null && lifecycleTokens > 0
+      ? options.versions.some((version) => version.repair_usage.length > 0)
+        ? repairUsage.status === "complete" && repairUsage.totalTokens !== null ? repairUsage.totalTokens / lifecycleTokens : null
+        : 0
+      : null,
+    successful_versions_per_100k_tokens: lifecycleTokens !== null && lifecycleTokens > 0 ? successfulVersions / lifecycleTokens * 100000 : null,
+    quality_adjusted_survival_per_100k_tokens: lifecycleTokens !== null && lifecycleTokens > 0 ? options.versions.reduce((total, version) => total + (version.score ?? 0), 0) / lifecycleTokens * 100000 : null,
     versions: options.versions
+  };
+}
+
+function aggregateUsage(usages: AgentUsage[]): AgentUsage {
+  if (usages.length === 0) return unavailableAgentUsage();
+  const statuses = usages.map((usage) => usage.status);
+  const complete = statuses.every((status) => status === "complete");
+  const anyMeasured = usages.some((usage) => usage.totalTokens !== null || usage.inputTokens !== null || usage.outputTokens !== null);
+  const sum = (field: keyof Pick<AgentUsage, "inputTokens" | "outputTokens" | "reasoningTokens" | "cacheReadTokens" | "cacheWriteTokens" | "totalTokens" | "reportedCost">): number | null =>
+    complete && usages.every((usage) => usage[field] !== null) ? usages.reduce((total, usage) => total + (usage[field] as number), 0) : null;
+  return {
+    status: complete ? "complete" : anyMeasured ? "partial" : statuses.includes("invalid") ? "invalid" : "unavailable",
+    inputTokens: sum("inputTokens"),
+    outputTokens: sum("outputTokens"),
+    reasoningTokens: sum("reasoningTokens"),
+    cacheReadTokens: sum("cacheReadTokens"),
+    cacheWriteTokens: sum("cacheWriteTokens"),
+    totalTokens: sum("totalTokens"),
+    reportedCost: sum("reportedCost"),
+    currency: complete && new Set(usages.map((usage) => usage.currency)).size === 1 ? usages[0]!.currency : null,
+    source: complete && new Set(usages.map((usage) => usage.source)).size === 1 ? usages[0]!.source : "unavailable"
   };
 }
 

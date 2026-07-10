@@ -35,6 +35,28 @@ checks:
     - tests/base/visual.spec.ts
   codeHealth: true
 
+requirements:
+  - id: create-todo
+    type: e2e
+    check: e2e
+    weight: 1
+    critical: true
+  - id: filters-and-completion
+    type: e2e
+    check: e2e
+    weight: 1
+    critical: true
+  - id: persistence
+    type: value
+    check: values
+    weight: 1
+    critical: true
+  - id: semantic-ui
+    type: observable-ui
+    check: visual
+    weight: 0.5
+    critical: false
+
 promptArms:
   user:
     - U1-structured

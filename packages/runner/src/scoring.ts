@@ -13,9 +13,10 @@ export type VersionScore = {
     value_score: number;
     visual_smoke_score: number;
     visual_similarity_score: number | null;
-    prompt_adherence_score: number;
+    requirement_adherence_score: number | null;
     version_quality_smoke_score: number;
-    version_quality: number;
+    benchmark_quality_score: number | null;
+    jury_quality_score: number | null;
     maintainability_score: number;
     overengineering_penalty: number;
     runtime_error_penalty: number;
@@ -39,14 +40,14 @@ export async function scoreV0(
   const e2eScore = ratio(evaluation.checks.e2e.passed, evaluation.checks.e2e.total);
   const valueScore = ratio(evaluation.checks.values.passed, evaluation.checks.values.total);
   const visualSmokeScore = ratio(evaluation.checks.visual.passed, evaluation.checks.visual.total);
-  const promptAdherenceScore = buildRuntimeScore;
+  const requirementAdherenceScore = evaluation.requirement_adherence.requirement_adherence_score;
   const runtimeErrorPenalty = scoreRuntimeErrorPenalty(evaluation);
   const versionQualityBeforePenalty =
     0.25 * buildRuntimeScore +
     0.35 * e2eScore +
     0.15 * valueScore +
     0.15 * visualSmokeScore +
-    0.1 * promptAdherenceScore;
+    0.1 * (requirementAdherenceScore ?? 0);
   const versionQuality = Math.max(0, versionQualityBeforePenalty - runtimeErrorPenalty);
 
   const score: VersionScore = {
@@ -59,9 +60,10 @@ export async function scoreV0(
       value_score: valueScore,
       visual_smoke_score: visualSmokeScore,
       visual_similarity_score: null,
-      prompt_adherence_score: promptAdherenceScore,
+      requirement_adherence_score: requirementAdherenceScore,
       version_quality_smoke_score: versionQuality,
-      version_quality: versionQuality,
+      benchmark_quality_score: null,
+      jury_quality_score: null,
       maintainability_score: maintainabilityScore,
       overengineering_penalty: 0,
       runtime_error_penalty: runtimeErrorPenalty
@@ -83,7 +85,9 @@ function ratio(passed: number | undefined, total: number | undefined): number {
 
 function buildNotes(evaluation: EvaluationResult): string[] {
   const notes: string[] = [
-    "visual_smoke_score means screenshot capture passed; no baseline similarity scoring is configured yet"
+    "version_quality_smoke_score is a deterministic smoke indicator, not a benchmark quality score",
+    "visual_smoke_score means screenshot capture passed; no baseline similarity scoring is configured yet",
+    "benchmark_quality_score remains null until a validated composite formula is approved"
   ];
   for (const [name, check] of Object.entries(evaluation.checks)) {
     if (check.status === "failed") {

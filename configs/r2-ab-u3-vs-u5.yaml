@@ -1,0 +1,35 @@
+id: ape_r2_ab_u3_v_u5
+seed: 20260710
+outputDir: runs
+
+opencode:
+  autoApprove: true
+  format: json
+  attachUrl: null
+  timeoutMs: 900000
+
+scaffold:
+  id: vite-react-ts
+  path: scaffolds/vite-react-ts
+
+models:
+  - id: deepseek-v4-flash-free
+    providerModel: opencode/deepseek-v4-flash-free
+
+tasks:
+  - todomvc
+
+prompts:
+  system:
+    - S2-maintainable-simple
+  user:
+    - U3-semantic-ui
+    - U5-maintainable
+  edit:
+    - E2-smallest-maintainable-change
+
+runsPerCell: 3
+maxVersions: 2
+maxRepairAttempts: 1
+concurrency: 1
+randomizeOrder: true

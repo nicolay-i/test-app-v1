@@ -1,0 +1,4 @@
+id: compliant-reference-a
+mockProfile: happy
+expected: pass
+description: Стандартная корректная реализация TodoMVC из детерминированного fixture generator.

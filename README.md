@@ -1,8 +1,8 @@
-# App Prompt Evolution Benchmark
+# Benchmark эволюции промптов приложения
 
-Implementation workspace for the benchmark described in `specs/`.
+Рабочее пространство benchmark-а из `specs/`.
 
-## Commands
+## Команды
 
 ```bash
 pnpm install
@@ -21,7 +21,10 @@ pnpm bench run-one \
 
 pnpm bench run-matrix --config configs/mvp.yaml --dry-run
 pnpm bench run-matrix --config configs/mvp.yaml --run-type mock --versions 2 --max-trajectories 2
+pnpm bench run-matrix --config configs/r2-ab-u3-vs-u5.yaml --run-type real --versions 2
 pnpm bench aggregate --config configs/mvp.yaml --execution <execution-id>
+pnpm bench verify-run --execution <execution-id>
+pnpm bench record-proof --execution <execution-id> --out proof/<name>.json --command "pnpm bench run-one ..."
 
 pnpm bench negotiate-one \
   --task todomvc \
@@ -31,18 +34,21 @@ pnpm bench negotiate-one \
   --run-type mock \
   --full
 
+# Для preflight по конкретной версии приложения:
+pnpm bench negotiate-one ... --source-workspace runs/<matrix>/executions/<id>/workspaces/<trajectory>
+
 pnpm bench export-jury-packet --trajectory <trajectory-id> --blind --out jury-packets/<packet-id>
 pnpm bench import-jury-review --trajectory <trajectory-id> --review jury-packets/<packet-id>/review-form.md --reviewer reviewer-1
 ```
 
-## Current Scope
+## Текущая область
 
-The runner supports a TodoMVC lifecycle trajectory: v0 generation, v1..v4 evolution prompts, cumulative regression tests, one repair attempt, per-version artifacts, trajectory summaries, aggregation, negotiation scenarios, and blind jury packet export/import.
+Runner поддерживает TodoMVC-траекторию: генерацию v0, эволюционные промпты v1..v4, накопительные регрессионные тесты, одну попытку ремонта, артефакты по версиям, сводки траекторий, агрегацию, сценарии переговоров и экспорт/импорт слепых пакетов жюри.
 
-`--run-type mock` uses a deterministic local generator and is excluded from the leaderboard. `--run-type real` invokes OpenCode and is eligible for leaderboard aggregation unless the trajectory is classified as an infra failure.
+`--run-type mock` использует детерминированный локальный генератор и исключается из leaderboard. `--run-type real` вызывает OpenCode. Реальный запуск требует чистого git-дерева; `--allow-dirty` предназначен только для диагностики и помечает execution как непригодный для публикации. Для такого запуска сохраняются `source.patch` и его SHA-256.
 
-Every `run-one` and `run-matrix` is fresh by default. Resume requires `--resume <execution-id>` and rejects changed run type, source/config/task/prompt/scaffold hashes, versions, mock profile, or trajectory definition. `--fresh` and `--force-new-execution` are explicit fresh-mode aliases and cannot be combined with resume.
+Каждый `run-one` и `run-matrix` по умолчанию создаёт новое execution. Возобновление требует `--resume <execution-id>` и отклоняет изменения типа запуска, исходного кода runner-а, состояния репозитория, config/task/prompt/scaffold-хешей, числа версий, mock-профиля или определения траектории. `--fresh` и `--force-new-execution` — явные синонимы нового запуска; их нельзя сочетать с `--resume`.
 
-`run-matrix` is intended for small controlled batches first. Use `--max-trajectories` and `--versions` before increasing matrix size.
+`run-matrix` сначала следует применять к малым контролируемым пакетам через `--max-trajectories` и `--versions`.
 
-`pnpm proof:mock` is the credential-free CI gate. It covers parser fixtures, mock lifecycle and terminal-failure paths, repair, artifact verification, leaderboard exclusion, and strict resume rejection.
+`pnpm proof:mock` — детерминированный локальный набор proof-проверок без учётных данных провайдера. Это обязательная pre-merge проверка; GitHub Actions workflow в репозитории сейчас не настроен. Набор проверяет parser fixtures, mock lifecycle и конечные сценарии ошибок, repair, проверку артефактов, исключение mock из leaderboard и строгое возобновление.

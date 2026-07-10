@@ -16,7 +16,18 @@ from visible text or roles.
 | `03-tags` | Tags can be assigned, filtered and persisted | Checkbox/select/button fallbacks, visible row text | Checkbox, select, or button tag picker |
 | `04-remove-tags` | Tag controls disappear while legacy data remains readable | Accessible creation control, absence of tag text/control, visible legacy task | Any migration implementation or storage key |
 
-Reference fixtures should include a compliant semantic implementation, an
-alternative DOM implementation, and a known-broken implementation before
-expanding the real matrix. The current mock generator is a smoke fixture, not
-evidence that every alternative DOM passes.
+## Fixture proof
+
+`tasks/todomvc/test-fixtures/` defines three deterministic fixtures. Они исполняются
+через `pnpm proof:fairness` или отдельными mock execution:
+
+| Fixture | Профиль | Ожидаемый результат | Проверенный execution |
+| --- | --- | --- | --- |
+| A: compliant reference | `happy` | base suite проходит | `20260710T150847Z-mock-5cf782` |
+| B: alternative DOM | `alternative-dom` | base suite проходит | `20260710T150942Z-mock-0bfcd1` |
+| C: intentionally broken | `intentionally-broken` | падает только E2E-критерий Completed filter | `20260710T151005Z-mock-586e59` |
+
+Профиль B меняет DOM-оболочку, class names и ключ localStorage. Профиль C сохраняет
+остальные контролы, но делает фильтр Completed неэффективным. Это доказывает
+поведение базового suite; cumulative эволюционные suites проверяются отдельно в
+lifecycle proof и не должны подменять этот audit.

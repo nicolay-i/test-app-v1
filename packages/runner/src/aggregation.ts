@@ -41,6 +41,9 @@ export async function aggregateRuns(runDirs: string[], outputDir: string): Promi
       failed_checks: version.failed_checks.join("|"),
       repair_attempts: version.repair_attempts ?? 0,
       repair_success: version.repair_success ?? false,
+      usage_status: version.version_total_usage?.status ?? "unavailable",
+      total_tokens: version.version_total_usage?.totalTokens ?? null,
+      reported_cost: version.version_total_usage?.reportedCost ?? null,
       loc_total: version.loc_total,
       largest_file_loc: version.largest_file_loc,
       files_touched: version.diff.files_touched,
@@ -101,6 +104,14 @@ function renderScoresCsv(summaries: TrajectorySummary[]): string {
     "mean_score",
     "regression_failures",
     "repair_attempts",
+    "usage_status",
+    "lifecycle_tokens",
+    "lifecycle_reported_cost",
+    "tokens_per_attempted_version",
+    "tokens_per_passing_version",
+    "repair_token_ratio",
+    "successful_versions_per_100k_tokens",
+    "quality_adjusted_survival_per_100k_tokens",
     "loc_growth",
     "largest_file_growth",
     "eligible_for_leaderboard"
@@ -125,6 +136,14 @@ function renderScoresCsv(summaries: TrajectorySummary[]): string {
       meanScore,
       summary.regression_failures_total,
       summary.repair_attempts_total ?? 0,
+      summary.lifecycle_usage?.status ?? "unavailable",
+      summary.lifecycle_tokens ?? "",
+      summary.lifecycle_reported_cost ?? "",
+      summary.tokens_per_attempted_version ?? "",
+      summary.tokens_per_passing_version ?? "",
+      summary.repair_token_ratio ?? "",
+      summary.successful_versions_per_100k_tokens ?? "",
+      summary.quality_adjusted_survival_per_100k_tokens ?? "",
       summary.loc_growth,
       summary.largest_file_growth,
       summary.run_type === "real"
@@ -178,10 +197,19 @@ function renderLeaderboard(summaries: TrajectorySummary[]): string {
     .sort((left, right) => (right.meanQuality ?? -Infinity) - (left.meanQuality ?? -Infinity));
   const efficiencyRows = [...grouped.entries()]
     .map(([key, group]) => {
-      const rows = group.filter((summary) => typeof summary.lifecycle_tokens === "number");
-      return { key, runs: rows.length, tokensPerPassingVersion: mean(rows.map((summary) => summary.tokens_per_passing_version).filter((value): value is number => typeof value === "number")), qualityAdjustedSurvivalPerToken: null as number | null };
+      const rows = group.filter((summary) => summary.usage_complete && typeof summary.lifecycle_tokens === "number");
+      return {
+        key,
+        runs: rows.length,
+        tokensPerAttemptedVersion: mean(rows.map((summary) => summary.tokens_per_attempted_version).filter((value): value is number => typeof value === "number")),
+        tokensPerPassingVersion: mean(rows.map((summary) => summary.tokens_per_passing_version).filter((value): value is number => typeof value === "number")),
+        repairTokenRatio: mean(rows.map((summary) => summary.repair_token_ratio).filter((value): value is number => typeof value === "number")),
+        successfulVersionsPer100kTokens: mean(rows.map((summary) => summary.successful_versions_per_100k_tokens).filter((value): value is number => typeof value === "number")),
+        qualityAdjustedSurvivalPer100kTokens: mean(rows.map((summary) => summary.quality_adjusted_survival_per_100k_tokens).filter((value): value is number => typeof value === "number"))
+      };
     })
     .filter((row) => row.runs > 0);
+  const unavailableUsage = eligible.filter((summary) => !summary.usage_complete);
 
   return [
     "# Lifecycle Leaderboards",
@@ -211,11 +239,15 @@ function renderLeaderboard(summaries: TrajectorySummary[]): string {
     "",
     "## Efficiency",
     "",
-    "Usage is provider-dependent. Rows appear only when lifecycle token usage is available.",
+    "Usage is provider-dependent. Rows appear only when all generation and repair attempts report complete token usage.",
     "",
-    "| Task / Model / Prompts | Runs With Usage | Tokens per Passing Version | Quality-Adjusted Survival per Token |",
-    "| --- | ---: | ---: | ---: |",
-    ...(efficiencyRows.length > 0 ? efficiencyRows.map((row) => `| ${row.key} | ${row.runs} | ${formatMetric(row.tokensPerPassingVersion)} | ${formatMetric(row.qualityAdjustedSurvivalPerToken)} |`) : ["| Usage unavailable | 0 | n/a | n/a |"]),
+    "| Task / Model / Prompts | Runs With Complete Usage | Tokens / Attempted Version | Tokens / Passing Version | Repair Token Ratio | Successful Versions / 100k Tokens | Quality-Adjusted Survival / 100k Tokens |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...(efficiencyRows.length > 0 ? efficiencyRows.map((row) => `| ${row.key} | ${row.runs} | ${formatMetric(row.tokensPerAttemptedVersion)} | ${formatMetric(row.tokensPerPassingVersion)} | ${formatMetric(row.repairTokenRatio)} | ${formatMetric(row.successfulVersionsPer100kTokens)} | ${formatMetric(row.qualityAdjustedSurvivalPer100kTokens)} |`) : ["| Usage unavailable | 0 | n/a | n/a | n/a | n/a | n/a |"]),
+    "",
+    "## Real Runs With Unavailable Usage",
+    "",
+    unavailableUsage.length > 0 ? unavailableUsage.map((summary) => `- ${summary.trajectory_id}: ${summary.lifecycle_usage?.status ?? "unavailable"}`).join("\n") : "None.",
     "",
     "## Excluded Infra Failures",
     "",

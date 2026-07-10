@@ -63,6 +63,7 @@ export async function validateTask(taskDir: string): Promise<TaskValidationResul
   validateReferencePaths(parsed, taskDir, errors);
   validateCheckPaths(parsed, taskDir, errors);
   validateScoring(parsed, taskDir, errors);
+  validateRequirements(parsed, errors);
   validateEvolution(parsed, taskDir, errors, warnings);
 
   return {
@@ -72,6 +73,27 @@ export async function validateTask(taskDir: string): Promise<TaskValidationResul
     errors,
     warnings
   };
+}
+
+function validateRequirements(parsed: Record<string, unknown>, errors: string[]): void {
+  if (parsed.requirements === undefined) return;
+  if (!Array.isArray(parsed.requirements)) {
+    errors.push('Field "requirements" must be an array');
+    return;
+  }
+  const ids = new Set<string>();
+  for (const [index, item] of parsed.requirements.entries()) {
+    if (!isRecord(item)) { errors.push(`Requirement ${index} must be an object`); continue; }
+    const id = stringField(item, "id", errors);
+    stringField(item, "type", errors);
+    if (typeof item.weight !== "number" || item.weight <= 0) errors.push(`Requirement "${id ?? index}" weight must be a positive number`);
+    if (typeof item.critical !== "boolean") errors.push(`Requirement "${id ?? index}" critical must be boolean`);
+    if (!["e2e", "values", "visual"].includes(String(item.check))) errors.push(`Requirement "${id ?? index}" check must be e2e, values, or visual`);
+    if (id) {
+      if (ids.has(id)) errors.push(`Duplicate requirement id "${id}"`);
+      ids.add(id);
+    }
+  }
 }
 
 function validateCheckPaths(

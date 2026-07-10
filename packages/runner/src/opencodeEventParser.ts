@@ -1,13 +1,19 @@
-export type OpenCodeUsage = {
+export type UsageStatus = "complete" | "partial" | "unavailable" | "invalid";
+
+export type AgentUsage = {
+  status: UsageStatus;
   inputTokens: number | null;
   outputTokens: number | null;
+  reasoningTokens: number | null;
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
   totalTokens: number | null;
   reportedCost: number | null;
-  source: "events" | "stats" | "unavailable";
-  complete: boolean;
+  currency: string | null;
+  source: "events" | "session_export" | "stats" | "unavailable";
 };
+
+export type OpenCodeUsage = AgentUsage;
 
 export type ParsedOpenCodeResult = {
   sessionId: string | null;
@@ -20,15 +26,17 @@ export type ParsedOpenCodeResult = {
   streamStatus: "complete" | "partial" | "invalid";
 };
 
-const unavailableUsage = (): OpenCodeUsage => ({
+const unavailableUsage = (): AgentUsage => ({
+  status: "unavailable",
   inputTokens: null,
   outputTokens: null,
+  reasoningTokens: null,
   cacheReadTokens: null,
   cacheWriteTokens: null,
   totalTokens: null,
   reportedCost: null,
+  currency: null,
   source: "unavailable",
-  complete: false
 });
 
 /** Parses OpenCode's newline-delimited event stream without assuming one event schema. */
@@ -113,23 +121,27 @@ function findToolError(event: Record<string, unknown>, type: string): string | n
   return error && (type.toLowerCase().includes("tool") || type.toLowerCase().includes("error")) ? error : null;
 }
 
-function findUsage(event: Record<string, unknown>): Partial<OpenCodeUsage> | null {
+function findUsage(event: Record<string, unknown>): Partial<AgentUsage> | null {
   const input = findNumber(event, ["inputTokens", "input_tokens", "prompt_tokens"]);
   const output = findNumber(event, ["outputTokens", "output_tokens", "completion_tokens"]);
+  const reasoning = findNumber(event, ["reasoningTokens", "reasoning_tokens"]);
   const cacheRead = findNumber(event, ["cacheReadTokens", "cache_read_tokens"]);
   const cacheWrite = findNumber(event, ["cacheWriteTokens", "cache_write_tokens"]);
   const total = findNumber(event, ["totalTokens", "total_tokens"]);
   const cost = findNumber(event, ["cost", "reportedCost", "reported_cost"]);
   if ([input, output, cacheRead, cacheWrite, total, cost].every((value) => value === null)) return null;
+  const totalTokens = total ?? (input !== null && output !== null ? input + output : null);
   return {
+    status: input !== null && output !== null && totalTokens !== null ? "complete" : "partial",
     inputTokens: input,
     outputTokens: output,
+    reasoningTokens: reasoning,
     cacheReadTokens: cacheRead,
     cacheWriteTokens: cacheWrite,
-    totalTokens: total ?? (input !== null && output !== null ? input + output : null),
+    totalTokens,
     reportedCost: cost,
+    currency: findString(event, ["currency"]),
     source: "events",
-    complete: input !== null && output !== null
   };
 }
 
@@ -143,16 +155,21 @@ function findNumber(value: unknown, keys: string[]): number | null {
   return null;
 }
 
-function mergeUsage(current: OpenCodeUsage, next: Partial<OpenCodeUsage>): OpenCodeUsage {
+function mergeUsage(current: AgentUsage, next: Partial<AgentUsage>): AgentUsage {
+  const inputTokens = next.inputTokens ?? current.inputTokens;
+  const outputTokens = next.outputTokens ?? current.outputTokens;
+  const totalTokens = next.totalTokens ?? current.totalTokens;
   return {
-    inputTokens: next.inputTokens ?? current.inputTokens,
-    outputTokens: next.outputTokens ?? current.outputTokens,
+    status: inputTokens !== null && outputTokens !== null && totalTokens !== null ? "complete" : next.status === "invalid" ? "invalid" : "partial",
+    inputTokens,
+    outputTokens,
+    reasoningTokens: next.reasoningTokens ?? current.reasoningTokens,
     cacheReadTokens: next.cacheReadTokens ?? current.cacheReadTokens,
     cacheWriteTokens: next.cacheWriteTokens ?? current.cacheWriteTokens,
-    totalTokens: next.totalTokens ?? current.totalTokens,
+    totalTokens,
     reportedCost: next.reportedCost ?? current.reportedCost,
+    currency: next.currency ?? current.currency,
     source: next.source ?? current.source,
-    complete: Boolean(next.complete ?? current.complete)
   };
 }
 
