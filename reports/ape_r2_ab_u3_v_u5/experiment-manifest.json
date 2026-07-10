@@ -1,6 +1,9 @@
 {
   "schema_version": "0.1.0",
-  "status": "planned",
+  "status": "inconclusive",
+  "execution_id": "20260710T153150Z-real-bedb90",
+  "tested_runner_commit": "b60f28b4085b3bb0c397e5a6b94dba7223ebcbd8",
+  "aggregation_commit": "a1e6dd6254b2dc6e5efdf6f9c963a2ef5c6316bd",
   "config": "configs/r2-ab-u3-vs-u5.yaml",
   "task": "todomvc",
   "model": "deepseek-v4-flash-free",
@@ -10,5 +13,7 @@
   "versions": ["v0", "v1", "v2"],
   "randomized_order": true,
   "seed": 20260710,
-  "eligible_run_type": "real"
+  "eligible_run_type": "real",
+  "completed_trajectories": 6,
+  "excluded_adapter_failures": 5
 }
