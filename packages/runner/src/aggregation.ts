@@ -155,13 +155,13 @@ function renderScoresCsv(summaries: TrajectorySummary[]): string {
 
 function renderLeaderboard(summaries: TrajectorySummary[]): string {
   const realSummaries = summaries.filter((summary) => summary.run_type === "real");
-  const infraFailures = realSummaries.filter((summary) =>
-    summary.versions.some((version) => version.failure_classification === "infra_failure")
-  );
+  const isExcludedInfrastructureFailure = (summary: TrajectorySummary): boolean =>
+    summary.versions.some((version) => version.failure_classification === "infra_failure" || version.failure_classification === "opencode_failure" || version.failure_classification === "harness_failure");
+  const infraFailures = realSummaries.filter(isExcludedInfrastructureFailure);
   const eligible = summaries.filter(
     (summary) =>
       summary.run_type === "real" &&
-      !summary.versions.some((version) => version.failure_classification === "infra_failure")
+      !isExcludedInfrastructureFailure(summary)
   );
   const grouped = new Map<string, TrajectorySummary[]>();
   for (const summary of eligible) {
@@ -255,7 +255,7 @@ function renderLeaderboard(summaries: TrajectorySummary[]): string {
       ? "| Trajectory | First Failed Version | Failed Checks | Artifacts |\n| --- | --- | --- | --- |\n" +
           infraFailures
             .map((summary) => {
-              const failed = summary.versions.find((version) => version.failure_classification === "infra_failure");
+              const failed = summary.versions.find((version) => version.failure_classification === "infra_failure" || version.failure_classification === "opencode_failure" || version.failure_classification === "harness_failure");
               return `| ${summary.trajectory_id} | ${failed?.version_id ?? "unknown"} | ${failed?.failed_checks.join(", ") || "unknown"} | ${failed?.artifacts_path ?? "n/a"} |`;
             })
             .join("\n")
