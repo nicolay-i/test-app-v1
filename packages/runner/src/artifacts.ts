@@ -385,7 +385,11 @@ function classifyFailure(evaluation: EvaluationResult, failedPhase: string | nul
       ? "infra_failure"
       : "model_failure";
   }
-  if (failedPhase === "runtimeSmoke" || failedPhase === "visual") {
+  if (failedPhase === "runtimeSmoke") {
+    const message = evaluation.checks.runtimeSmoke.message ?? "";
+    return /EPERM|EADDRINUSE|operation not permitted|listen/i.test(message) ? "infra_failure" : "model_failure";
+  }
+  if (failedPhase === "visual") {
     return "model_failure";
   }
   if (failedPhase === "e2e" || failedPhase === "values") {

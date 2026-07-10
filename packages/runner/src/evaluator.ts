@@ -249,11 +249,12 @@ async function runRuntimeSmoke(
       ...(passed ? {} : { message: "Root element not found in HTML" })
     };
   } catch (error) {
+    const message = [error instanceof Error ? error.message : String(error), tail(log.trim(), 600)].filter(Boolean).join("\n");
     return {
       status: "failed",
       duration_ms: Date.now() - startedAt,
       log_path: logPath,
-      message: error instanceof Error ? error.message : String(error)
+      message
     };
   } finally {
     if (server && !server.killed) {

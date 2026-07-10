@@ -5,6 +5,7 @@ import { cpus } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { aggregateRun } from "./aggregation.js";
+import { runCommand } from "./command.js";
 import { loadMatrixConfig } from "./config.js";
 import { EventLogger } from "./events.js";
 import { evaluateWorkspace, type EvaluationResult } from "./evaluator.js";
@@ -212,7 +213,10 @@ async function runOneCommand(args: CliArgs): Promise<void> {
   const useMockOpenCode = mockOpenCode || runType === "mock";
   const requestedVersions = numberOption(args, "versions", 0);
   const skipInstall = booleanOption(args, "skip-install", false);
-  const selected = selectTrajectory(config, args);
+  const selectedBase = selectTrajectory(config, args);
+  const selected = dryRun
+    ? { ...selectedBase, trajectoryId: `${selectedBase.trajectoryId}__dry-run` }
+    : selectedBase;
   const runDir = path.join(rootDir, config.outputDir, config.id);
   const trajectoryArtifactsPath = path.join(runDir, "artifacts", selected.trajectoryId);
   const artifactsPath = path.join(runDir, "artifacts", selected.trajectoryId, "v0");
@@ -940,12 +944,18 @@ function printTaskValidation(result: Awaited<ReturnType<typeof validateTaskWithP
 
 async function runMatrixCommand(args: CliArgs): Promise<void> {
   const rootDir = process.cwd();
-  const configPath = resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml"));
+  const configOption = stringOption(args, "config", "configs/mvp.yaml");
+  const configPath = resolveFromRoot(rootDir, configOption);
   const dryRun = booleanOption(args, "dry-run", false);
   const config = await loadMatrixConfig(configPath);
   const runDir = path.join(rootDir, config.outputDir, config.id);
   const logger = new EventLogger(runDir, config.id);
-  const plan = buildTrajectoryPlan(config);
+  const maxTrajectories = optionalNumberOption(args, "max-trajectories");
+  const requestedVersions = optionalNumberOption(args, "versions") ?? (dryRun ? config.maxVersions : 0);
+  const runType = readRunType(args, booleanOption(args, "mock-opencode", false));
+  const skipInstall = booleanOption(args, "skip-install", false);
+  const resume = booleanOption(args, "resume", true);
+  const plan = buildTrajectoryPlan(config).slice(0, maxTrajectories ?? undefined);
 
   await logger.write({
     level: "info",
@@ -953,14 +963,19 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
     event: dryRun ? "dry_run_started" : "started",
     data: {
       trajectories: plan.length,
-      versionsPerTrajectory: config.maxVersions + 1
+      versionsPerTrajectory: requestedVersions + 1,
+      runType,
+      resume
     }
   });
 
   console.log(`matrix id: ${config.id}`);
   console.log(`trajectories: ${plan.length}`);
-  console.log(`version steps: ${plan.length * (config.maxVersions + 1)}`);
+  console.log(`version steps: ${plan.length * (requestedVersions + 1)}`);
   console.log(`concurrency: ${config.concurrency}`);
+  console.log(`run type: ${runType}`);
+  console.log(`edit versions: ${requestedVersions}`);
+  console.log(`resume: ${resume}`);
 
   for (const [index, trajectory] of plan.slice(0, 10).entries()) {
     console.log(
@@ -974,7 +989,35 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
   }
 
   if (!dryRun) {
-    throw new Error("run-matrix execution is not implemented yet. Use --dry-run for this slice.");
+    const result = await executeMatrix({
+      rootDir,
+      config,
+      configOption,
+      runDir,
+      plan,
+      runType,
+      requestedVersions,
+      skipInstall,
+      resume
+    });
+    const aggregate = await aggregateRun(runDir);
+    await logger.write({
+      level: result.failed === 0 ? "info" : "warn",
+      phase: "run_matrix",
+      event: "completed",
+      data: {
+        passed: result.passed,
+        failed: result.failed,
+        skipped: result.skipped,
+        aggregate
+      }
+    });
+    console.log(`matrix completed: ${result.passed} passed, ${result.failed} failed, ${result.skipped} skipped`);
+    console.log(`leaderboard: ${aggregate.outputs.leaderboardMd}`);
+    if (result.failed > 0) {
+      process.exitCode = 1;
+    }
+    return;
   }
 
   await logger.write({
@@ -985,6 +1028,87 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
       firstTrajectory: plan[0]?.trajectoryId ?? null
     }
   });
+}
+
+async function executeMatrix(options: {
+  rootDir: string;
+  config: MatrixConfig;
+  configOption: string;
+  runDir: string;
+  plan: TrajectoryPlan[];
+  runType: RunType;
+  requestedVersions: number;
+  skipInstall: boolean;
+  resume: boolean;
+}): Promise<{ passed: number; failed: number; skipped: number }> {
+  const state = {
+    nextIndex: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0
+  };
+  const concurrency = Math.max(1, Math.min(options.config.concurrency, options.plan.length || 1));
+  await ensureDir(path.join(options.runDir, "matrix"));
+
+  async function worker(): Promise<void> {
+    while (state.nextIndex < options.plan.length) {
+      const index = state.nextIndex;
+      state.nextIndex += 1;
+      const trajectory = options.plan[index];
+      if (!trajectory) {
+        continue;
+      }
+      const summaryPath = path.join(options.runDir, "artifacts", trajectory.trajectoryId, "trajectory-summary.json");
+      if (options.resume && (await pathExists(summaryPath))) {
+        state.skipped += 1;
+        console.log(`[${index + 1}/${options.plan.length}] skipped existing ${trajectory.trajectoryId}`);
+        continue;
+      }
+
+      console.log(`[${index + 1}/${options.plan.length}] running ${trajectory.trajectoryId}`);
+      const logPath = path.join(options.runDir, "matrix", `${trajectory.trajectoryId}.log`);
+      const commandArgs = [
+        "--import",
+        "tsx",
+        "packages/runner/src/cli.ts",
+        "run-one",
+        "--config",
+        options.configOption,
+        "--task",
+        trajectory.taskId,
+        "--model",
+        trajectory.modelId,
+        "--system",
+        trajectory.systemPromptId,
+        "--user",
+        trajectory.userPromptId,
+        "--edit",
+        trajectory.editPromptId,
+        "--run",
+        String(trajectory.runNumber),
+        "--versions",
+        String(options.requestedVersions),
+        "--run-type",
+        options.runType
+      ];
+      if (options.skipInstall) {
+        commandArgs.push("--skip-install");
+      }
+      const result = await runCommand(process.execPath, commandArgs, options.rootDir, logPath, 60 * 60 * 1000);
+      if (result.exitCode === 0) {
+        state.passed += 1;
+      } else {
+        state.failed += 1;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return {
+    passed: state.passed,
+    failed: state.failed,
+    skipped: state.skipped
+  };
 }
 
 async function aggregateCommand(args: CliArgs): Promise<void> {
