@@ -30,7 +30,8 @@ function normalizeMatrixConfig(value: Record<string, unknown>): MatrixConfig {
       autoApprove: optionalBoolean(opencode, "autoApprove", true),
       format: optionalEnum(opencode, "format", ["json", "default"], "json"),
       attachUrl: optionalNullableString(opencode, "attachUrl", null),
-      timeoutMs: optionalNumber(opencode, "timeoutMs", 900000)
+      timeoutMs: optionalNumber(opencode, "timeoutMs", 900000),
+      maxAttempts: optionalNumber(opencode, "maxAttempts", 2)
     },
     scaffold: {
       id: requiredString(scaffold, "id"),

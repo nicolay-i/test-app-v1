@@ -375,7 +375,8 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         artifactsPath,
         format: config.opencode.format,
         autoApprove: config.opencode.autoApprove,
-        timeoutMs: config.opencode.timeoutMs
+        timeoutMs: config.opencode.timeoutMs,
+        maxAttempts: config.opencode.maxAttempts
       });
 
   await captureGitDiff(workspace.workspacePath, path.join(artifactsPath, "git.diff"));
@@ -571,7 +572,8 @@ async function runOneCommand(args: CliArgs): Promise<void> {
           artifactsPath: editArtifactsPath,
           format: config.opencode.format,
           autoApprove: config.opencode.autoApprove,
-          timeoutMs: config.opencode.timeoutMs
+          timeoutMs: config.opencode.timeoutMs,
+          maxAttempts: config.opencode.maxAttempts
         });
 
     await captureGitDiff(workspace.workspacePath, path.join(editArtifactsPath, "git.diff"));
@@ -838,7 +840,8 @@ async function maybeRepairVersion(options: {
         artifactsPath: repairArtifactsPath,
         format: options.config.opencode.format,
         autoApprove: options.config.opencode.autoApprove,
-        timeoutMs: options.config.opencode.timeoutMs
+        timeoutMs: options.config.opencode.timeoutMs,
+        maxAttempts: options.config.opencode.maxAttempts
       });
 
   await captureGitDiff(options.workspacePath, path.join(repairArtifactsPath, "git.diff"));
@@ -1683,7 +1686,8 @@ async function runFullNegotiationImplementation(options: {
           artifactsPath: options.artifactsPath,
           format: options.config.opencode.format,
           autoApprove: options.config.opencode.autoApprove,
-          timeoutMs: options.config.opencode.timeoutMs
+          timeoutMs: options.config.opencode.timeoutMs,
+          maxAttempts: options.config.opencode.maxAttempts
         });
   await captureGitDiff(options.workspacePath, path.join(options.artifactsPath, "git.diff"));
 

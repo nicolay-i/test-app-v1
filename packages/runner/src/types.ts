@@ -12,6 +12,7 @@ export type MatrixConfig = {
     format: "json" | "default";
     attachUrl: string | null;
     timeoutMs: number;
+    maxAttempts: number;
   };
   scaffold: {
     id: string;
