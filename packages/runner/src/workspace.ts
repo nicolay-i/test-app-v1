@@ -15,6 +15,7 @@ export async function prepareWorkspace(options: {
   runDir: string;
   scaffoldPath: string;
   trajectory: TrajectoryPlan;
+  executionId: string;
 }): Promise<WorkspaceResult> {
   const workspacePath = path.join(options.runDir, "workspaces", options.trajectory.trajectoryId);
   const metadataPath = path.join(workspacePath, ".ape-trajectory.json");
@@ -38,6 +39,7 @@ export async function prepareWorkspace(options: {
     metadataPath,
     JSON.stringify(
       {
+        execution_id: options.executionId,
         trajectory_id: options.trajectory.trajectoryId,
         task_id: options.trajectory.taskId,
         model_id: options.trajectory.modelId,

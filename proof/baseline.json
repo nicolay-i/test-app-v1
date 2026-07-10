@@ -1,0 +1,9 @@
+{
+  "source_commit": "6385653fb1d26db0fe8485534bb36aae7f2fbf2a",
+  "created_at": "2026-07-10T05:47:22Z",
+  "typecheck": "passed",
+  "task_validation": "passed",
+  "mock_lifecycle": "incomplete_harness_failure",
+  "real_opencode": "not_proven",
+  "known_failure": "mock lifecycle r50 terminated after v0 generation without a terminal trajectory summary"
+}

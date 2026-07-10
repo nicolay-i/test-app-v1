@@ -1,0 +1,12 @@
+{
+  "source_commit": "6385653fb1d26db0fe8485534bb36aae7f2fbf2a",
+  "executions": {
+    "U3-semantic-ui": "20260710T060412Z-real-c773cd",
+    "U5-maintainable": "20260710T063417Z-real-f89779"
+  },
+  "comparison": {
+    "U3-semantic-ui": { "survived_versions": 2, "status": "passed" },
+    "U5-maintainable": { "first_failed_version": "v1", "repair_success": false, "status": "failed" }
+  },
+  "aggregate_command": "pnpm bench aggregate --config configs/mvp.yaml --executions 20260710T060412Z-real-c773cd,20260710T063417Z-real-f89779"
+}

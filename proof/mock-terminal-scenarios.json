@@ -1,0 +1,15 @@
+{
+  "source_commit": "6385653fb1d26db0fe8485534bb36aae7f2fbf2a",
+  "resume_execution_id": "20260710T061904Z-mock-f97153",
+  "resume_rejection": "requested_versions differs",
+  "timeout_execution_id": "20260710T061930Z-mock-d211a3",
+  "e2e_repair_failure_execution_id": "20260710T062153Z-mock-00012a",
+  "e2e_repair_failure": {
+    "version": "v2",
+    "first_failed_version": "v2",
+    "repair_attempts": 1,
+    "repair_success": false
+  },
+  "matrix_execution_id": "20260710T062437Z-mock-ba13ef",
+  "verification": "pnpm bench verify-run --execution <each execution id>"
+}

@@ -196,9 +196,8 @@ async function runRealDecision(options: {
   if (!result.ok) {
     return unknownDecision(`OpenCode failed with exit code ${result.exitCode}`);
   }
-  const raw = await readFile(result.stdoutPath, "utf8").catch(() => "");
-  await writeFile(path.join(options.artifactsPath, "agent-decision.raw.txt"), raw, "utf8");
-  return parseDecision(raw);
+  await writeFile(path.join(options.artifactsPath, "agent-decision.raw.txt"), result.parsed.assistantText, "utf8");
+  return parseDecision(result.parsed.assistantText);
 }
 
 export function parseDecision(raw: string): AgentDecision {

@@ -1,0 +1,5 @@
+{
+  "command": "pnpm bench export-jury-packet --execution 20260710T060412Z-real-c773cd --trajectory todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r61 --strict-blind --out jury-packets/strict-r61",
+  "result": "passed",
+  "leak_check": "no model, prompt, run_type, score or failure classification in text files or source snapshot"
+}

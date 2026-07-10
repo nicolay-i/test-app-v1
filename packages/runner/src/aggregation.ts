@@ -15,13 +15,16 @@ export type AggregationResult = {
 };
 
 export async function aggregateRun(runDir: string): Promise<AggregationResult> {
-  const artifactsDir = path.join(runDir, "artifacts");
-  await ensureDir(runDir);
-  const summaries = await readTrajectorySummaries(artifactsDir);
-  const trajectoryResultsJsonl = path.join(runDir, "trajectory-results.jsonl");
-  const versionResultsJsonl = path.join(runDir, "version-results.jsonl");
-  const scoresCsv = path.join(runDir, "scores.csv");
-  const leaderboardMd = path.join(runDir, "leaderboard.md");
+  return aggregateRuns([runDir], runDir);
+}
+
+export async function aggregateRuns(runDirs: string[], outputDir: string): Promise<AggregationResult> {
+  await ensureDir(outputDir);
+  const summaries = (await Promise.all(runDirs.map((runDir) => readTrajectorySummaries(path.join(runDir, "artifacts"))))).flat();
+  const trajectoryResultsJsonl = path.join(outputDir, "trajectory-results.jsonl");
+  const versionResultsJsonl = path.join(outputDir, "version-results.jsonl");
+  const scoresCsv = path.join(outputDir, "scores.csv");
+  const leaderboardMd = path.join(outputDir, "leaderboard.md");
   const versionRows = summaries.flatMap((summary) =>
     summary.versions.map((version) => ({
       run_type: summary.run_type,
@@ -103,7 +106,7 @@ function renderScoresCsv(summaries: TrajectorySummary[]): string {
     "eligible_for_leaderboard"
   ];
   const rows = summaries.map((summary) => {
-    const scores = summary.versions.map((version) => version.score);
+    const scores = summary.versions.map((version) => version.score).filter((score): score is number => score !== null);
     const v0Score = summary.score_by_version.v0 ?? "";
     const finalScore = scores.length > 0 ? scores[scores.length - 1] : "";
     const meanScore = scores.length > 0 ? scores.reduce((total, score) => total + score, 0) / scores.length : "";
@@ -146,34 +149,73 @@ function renderLeaderboard(summaries: TrajectorySummary[]): string {
     const key = [summary.task_id, summary.model_id, summary.system_prompt_id, summary.user_prompt_id, summary.edit_prompt_id].join(" / ");
     grouped.set(key, [...(grouped.get(key) ?? []), summary]);
   }
-  const rows = [...grouped.entries()]
+  const reliabilityRows = [...grouped.entries()]
     .map(([key, group]) => {
-      const finalScores = group.map((summary) => summary.versions.at(-1)?.score ?? 0);
-      const meanFinalScore = finalScores.reduce((total, score) => total + score, 0) / finalScores.length;
       const meanSurvived = group.reduce((total, summary) => total + summary.survived_versions, 0) / group.length;
+      const meanSurvivalRate = group.reduce((total, summary) => total + (summary.survival_rate ?? summary.survived_versions / Math.max(1, summary.total_versions_requested)), 0) / group.length;
+      const regressionFreeRate = group.reduce((total, summary) => total + ((summary.regression_free_versions ?? summary.versions.filter((version) => !version.failed_checks.some((check) => check === "e2e" || check === "values")).length) / Math.max(1, summary.versions.length)), 0) / group.length;
+      const repairFreeRate = group.reduce((total, summary) => total + ((summary.repair_free_versions ?? summary.versions.filter((version) => version.repair_attempts === 0).length) / Math.max(1, summary.versions.length)), 0) / group.length;
       return {
         key,
         runs: group.length,
-        meanFinalScore,
         meanSurvived,
+        meanSurvivalRate,
+        regressionFreeRate,
+        repairFreeRate,
+        firstFailed: group.map((summary) => summary.first_failed_version ?? "none").join(", "),
         sampleArtifactsPath: group[0]?.versions.at(-1)?.artifacts_path ?? group[0]?.versions[0]?.artifacts_path ?? ""
       };
     })
-    .sort((left, right) => right.meanFinalScore - left.meanFinalScore || right.meanSurvived - left.meanSurvived);
+    .sort((left, right) => right.meanSurvivalRate - left.meanSurvivalRate || right.meanSurvived - left.meanSurvived || right.regressionFreeRate - left.regressionFreeRate);
+  const qualityRows = [...grouped.entries()]
+    .map(([key, group]) => {
+      const scores = group.flatMap((summary) => summary.versions.filter((version) => version.evaluation_completed && version.score !== null).map((version) => version.score!));
+      const finalScores = group.map((summary) => [...summary.versions].reverse().find((version) => version.evaluation_completed && version.score !== null)?.score).filter((score): score is number => score !== undefined && score !== null);
+      const slopes = group.map((summary) => summary.quality_degradation_slope).filter((value): value is number => value !== null && value !== undefined);
+      return { key, runs: group.length, evaluated: scores.length, meanQuality: mean(scores), finalQuality: mean(finalScores), minQuality: scores.length ? Math.min(...scores) : null, degradationSlope: mean(slopes) };
+    })
+    .filter((row) => row.evaluated > 0)
+    .sort((left, right) => (right.meanQuality ?? -Infinity) - (left.meanQuality ?? -Infinity));
+  const efficiencyRows = [...grouped.entries()]
+    .map(([key, group]) => {
+      const rows = group.filter((summary) => typeof summary.lifecycle_tokens === "number");
+      return { key, runs: rows.length, tokensPerPassingVersion: mean(rows.map((summary) => summary.tokens_per_passing_version).filter((value): value is number => typeof value === "number")), qualityAdjustedSurvivalPerToken: null as number | null };
+    })
+    .filter((row) => row.runs > 0);
 
   return [
-    "# Leaderboard",
+    "# Lifecycle Leaderboards",
     "",
-    "Only real runs are included. Mock runs and trajectories with infra failures are excluded from ranking.",
+    "Only real runs are included. Infra/harness failures are excluded from model rankings and reported separately. Mock runs are never eligible.",
     "",
-    "| Rank | Task / Model / Prompts | Runs | Mean Final Score | Mean Survived Versions | Sample Artifacts |",
-    "| ---: | --- | ---: | ---: | ---: | --- |",
-    ...(rows.length > 0
-      ? rows.map(
+    "## Reliability",
+    "",
+    "Ordered by survival rate, survived versions, regression-free rate, then repair-free rate.",
+    "",
+    "| Rank | Task / Model / Prompts | Runs | Survival Rate | Mean Survived | Regression-Free | Repair-Free | First Failed | Sample Artifacts |",
+    "| ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+    ...(reliabilityRows.length > 0
+      ? reliabilityRows.map(
           (row, index) =>
-            `| ${index + 1} | ${row.key} | ${row.runs} | ${row.meanFinalScore.toFixed(3)} | ${row.meanSurvived.toFixed(2)} | ${row.sampleArtifactsPath} |`
+            `| ${index + 1} | ${row.key} | ${row.runs} | ${row.meanSurvivalRate.toFixed(3)} | ${row.meanSurvived.toFixed(2)} | ${row.regressionFreeRate.toFixed(3)} | ${row.repairFreeRate.toFixed(3)} | ${row.firstFailed} | ${row.sampleArtifactsPath} |`
         )
-      : ["| n/a | No eligible real runs yet | 0 | 0.000 | 0.00 | n/a |"]),
+      : ["| n/a | No eligible real runs yet | 0 | 0.000 | 0.00 | 0.000 | 0.000 | n/a | n/a |"]),
+    "",
+    "## Conditional Quality",
+    "",
+    "Only fully evaluated versions contribute; unavailable evaluation is not converted to zero.",
+    "",
+    "| Task / Model / Prompts | Evaluated Versions | Mean Quality | Final Evaluated Quality | Minimum Quality | Quality Degradation Slope |",
+    "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ...(qualityRows.length > 0 ? qualityRows.map((row) => `| ${row.key} | ${row.evaluated} | ${formatMetric(row.meanQuality)} | ${formatMetric(row.finalQuality)} | ${formatMetric(row.minQuality)} | ${formatMetric(row.degradationSlope)} |`) : ["| No fully evaluated real versions yet | 0 | n/a | n/a | n/a | n/a |"]),
+    "",
+    "## Efficiency",
+    "",
+    "Usage is provider-dependent. Rows appear only when lifecycle token usage is available.",
+    "",
+    "| Task / Model / Prompts | Runs With Usage | Tokens per Passing Version | Quality-Adjusted Survival per Token |",
+    "| --- | ---: | ---: | ---: |",
+    ...(efficiencyRows.length > 0 ? efficiencyRows.map((row) => `| ${row.key} | ${row.runs} | ${formatMetric(row.tokensPerPassingVersion)} | ${formatMetric(row.qualityAdjustedSurvivalPerToken)} |`) : ["| Usage unavailable | 0 | n/a | n/a |"]),
     "",
     "## Excluded Infra Failures",
     "",
@@ -188,6 +230,14 @@ function renderLeaderboard(summaries: TrajectorySummary[]): string {
       : "No real trajectories were excluded for infra failures.",
     ""
   ].join("\n");
+}
+
+function mean(values: number[]): number | null {
+  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
+}
+
+function formatMetric(value: number | null): string {
+  return value === null ? "n/a" : value.toFixed(3);
 }
 
 function csvCell(value: unknown): string {

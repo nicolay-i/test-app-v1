@@ -1,0 +1,8 @@
+{
+  "source_commit": "6385653fb1d26db0fe8485534bb36aae7f2fbf2a",
+  "command": "pnpm bench run-one ... --run-type mock --mock-profile opencode-fail-v0 --run 52",
+  "execution_id": "20260710T055454Z-mock-7478d4",
+  "expected_exit_code": 1,
+  "result": "terminal_artifacts_written",
+  "verification": "pnpm bench verify-run --execution 20260710T055454Z-mock-7478d4"
+}

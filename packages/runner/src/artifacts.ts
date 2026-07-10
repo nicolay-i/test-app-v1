@@ -16,6 +16,7 @@ export type FailureClassification =
 
 export type RunMetadata = {
   schema_version: "0.1.0";
+  execution_id: string;
   run_type: RunType;
   task_id: string;
   model_id: string;
@@ -30,7 +31,7 @@ export type RunMetadata = {
   prompt_path: string;
   started_at: string;
   completed_at: string | null;
-  status: "running" | "passed" | "failed";
+  status: "running" | "passed" | "failed" | "incomplete" | "aborted";
   failure_classification: FailureClassification;
 };
 
@@ -54,14 +55,16 @@ export type DiffMetrics = {
 
 export type TrajectoryVersionSummary = {
   version_id: string;
-  status: "passed" | "failed";
-  score: number;
+  status: "passed" | "failed" | "incomplete" | "aborted";
+  score: number | null;
   failure_classification: FailureClassification;
+  failed_phase: string | null;
+  evaluation_completed: boolean;
   failed_checks: string[];
   repair_attempts: number;
   repair_success: boolean;
-  loc_total: number;
-  largest_file_loc: number;
+  loc_total: number | null;
+  largest_file_loc: number | null;
   diff: DiffMetrics;
   artifacts_path: string;
 };
@@ -82,14 +85,21 @@ export type TrajectorySummary = {
   regression_failures_total: number;
   repair_attempts_total: number;
   repair_successes_total: number;
-  total_tokens: null;
+  total_tokens: number | null;
+  survival_rate: number;
+  regression_free_versions: number;
+  repair_free_versions: number;
+  quality_degradation_slope: number | null;
+  lifecycle_tokens: number | null;
+  tokens_per_passing_version: number | null;
+  usage_complete: false;
   total_latency_ms: number;
   total_files_touched: number;
   total_lines_added: number;
   total_lines_deleted: number;
   largest_file_growth: number;
   loc_growth: number;
-  score_by_version: Record<string, number>;
+  score_by_version: Record<string, number | null>;
   versions: TrajectoryVersionSummary[];
 };
 
@@ -121,6 +131,7 @@ export type RepairSummary = {
 
 export function buildInitialRunMetadata(options: {
   runType: RunType;
+  executionId: string;
   trajectory: TrajectoryPlan;
   versionId: string;
   workspacePath: string;
@@ -130,6 +141,7 @@ export function buildInitialRunMetadata(options: {
 }): RunMetadata {
   return {
     schema_version: "0.1.0",
+    execution_id: options.executionId,
     run_type: options.runType,
     task_id: options.trajectory.taskId,
     model_id: options.trajectory.modelId,
@@ -253,6 +265,41 @@ export async function writeRunReport(options: {
   await writeFile(path.join(options.artifactsPath, "report.md"), report, "utf8");
 }
 
+export async function writeTerminalRunReport(options: {
+  artifactsPath: string;
+  metadata: RunMetadata;
+  failureSummary: FailureSummary;
+}): Promise<void> {
+  await writeFile(
+    path.join(options.artifactsPath, "report.md"),
+    ["# Run Summary", "", `Task: ${options.metadata.task_id}`, `Status: ${options.metadata.status}`, "", "## Failure Summary", "", `- classification: ${options.failureSummary.classification}`, `- failed phase: ${options.failureSummary.failed_phase ?? "unknown"}`, `- messages: ${options.failureSummary.messages.join("; ") || "none"}`, ""].join("\n"),
+    "utf8"
+  );
+}
+
+export async function buildTerminalVersionSummary(options: {
+  versionId: string;
+  classification: FailureClassification;
+  failedPhase: string;
+  artifactsPath: string;
+}): Promise<TrajectoryVersionSummary> {
+  return {
+    version_id: options.versionId,
+    status: "failed",
+    score: null,
+    failure_classification: options.classification,
+    failed_phase: options.failedPhase,
+    evaluation_completed: false,
+    failed_checks: [options.failedPhase],
+    repair_attempts: 0,
+    repair_success: false,
+    loc_total: null,
+    largest_file_loc: null,
+    diff: await readDiffMetrics(path.join(options.artifactsPath, "git.diff")),
+    artifacts_path: options.artifactsPath
+  };
+}
+
 export async function readDiffMetrics(diffPath: string): Promise<DiffMetrics> {
   const diff = await readFile(diffPath, "utf8").catch(() => "");
   const files = new Set<string>();
@@ -295,7 +342,7 @@ export function buildTrajectorySummary(options: {
   versions: TrajectoryVersionSummary[];
   totalLatencyMs: number;
 }): TrajectorySummary {
-  const failed = options.versions.find((version) => version.status === "failed");
+  const failed = options.versions.find((version) => version.status !== "passed");
   const baseline = options.versions[0];
   const final = options.versions[options.versions.length - 1];
   const scoreByVersion = Object.fromEntries(options.versions.map((version) => [version.version_id, version.score]));
@@ -303,6 +350,12 @@ export function buildTrajectorySummary(options: {
     (total, version) => total + version.failed_checks.filter((check) => check === "e2e" || check === "values").length,
     0
   );
+  const evaluatedScores = options.versions
+    .map((version, index) => ({ index, score: version.score }))
+    .filter((item): item is { index: number; score: number } => item.score !== null);
+  const qualityDegradationSlope = evaluatedScores.length < 2
+    ? null
+    : linearSlope(evaluatedScores.map((item) => item.index), evaluatedScores.map((item) => item.score));
 
   return {
     schema_version: "0.1.0",
@@ -321,15 +374,30 @@ export function buildTrajectorySummary(options: {
     repair_attempts_total: options.versions.reduce((total, version) => total + version.repair_attempts, 0),
     repair_successes_total: options.versions.filter((version) => version.repair_success).length,
     total_tokens: null,
+    survival_rate: options.versions.length === 0 ? 0 : countSurvivedEditVersions(options.versions) / Math.max(1, options.versionsRequested),
+    regression_free_versions: options.versions.filter((version) => !version.failed_checks.some((check) => check === "e2e" || check === "values")).length,
+    repair_free_versions: options.versions.filter((version) => version.repair_attempts === 0).length,
+    quality_degradation_slope: qualityDegradationSlope,
+    lifecycle_tokens: null,
+    tokens_per_passing_version: null,
+    usage_complete: false,
     total_latency_ms: options.totalLatencyMs,
     total_files_touched: options.versions.reduce((total, version) => total + version.diff.files_touched, 0),
     total_lines_added: options.versions.reduce((total, version) => total + version.diff.lines_added, 0),
     total_lines_deleted: options.versions.reduce((total, version) => total + version.diff.lines_deleted, 0),
-    largest_file_growth: final && baseline ? final.largest_file_loc - baseline.largest_file_loc : 0,
-    loc_growth: final && baseline ? final.loc_total - baseline.loc_total : 0,
+    largest_file_growth: final && baseline && final.largest_file_loc !== null && baseline.largest_file_loc !== null ? final.largest_file_loc - baseline.largest_file_loc : 0,
+    loc_growth: final && baseline && final.loc_total !== null && baseline.loc_total !== null ? final.loc_total - baseline.loc_total : 0,
     score_by_version: scoreByVersion,
     versions: options.versions
   };
+}
+
+function linearSlope(xs: number[], ys: number[]): number | null {
+  if (xs.length !== ys.length || xs.length < 2) return null;
+  const meanX = xs.reduce((total, value) => total + value, 0) / xs.length;
+  const meanY = ys.reduce((total, value) => total + value, 0) / ys.length;
+  const denominator = xs.reduce((total, value) => total + (value - meanX) ** 2, 0);
+  return denominator === 0 ? null : xs.reduce((total, value, index) => total + (value - meanX) * (ys[index]! - meanY), 0) / denominator;
 }
 
 export async function writeTrajectoryArtifacts(artifactsRootPath: string, summary: TrajectorySummary): Promise<void> {
@@ -438,7 +506,7 @@ function renderTrajectoryReport(summary: TrajectorySummary): string {
     "",
     "## Score Trend",
     "",
-    ...summary.versions.map((version) => `- ${version.version_id}: ${formatScore(version.score)} (${version.status})`),
+    ...summary.versions.map((version) => `- ${version.version_id}: ${version.score === null ? "unavailable" : formatScore(version.score)} (${version.status})`),
     "",
     "## Growth",
     "",

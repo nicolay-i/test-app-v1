@@ -1,0 +1,10 @@
+{
+  "source_commit": "6385653fb1d26db0fe8485534bb36aae7f2fbf2a",
+  "command": "pnpm bench run-one ... --run-type mock --mock-profile build-fail-v2-repair-success --versions 2 --run 53",
+  "execution_id": "20260710T060233Z-mock-d83425",
+  "result": "passed_after_repair",
+  "version": "v2",
+  "failure_before_repair": "build",
+  "repair_success": true,
+  "verification": "pnpm bench verify-run --execution 20260710T060233Z-mock-d83425"
+}

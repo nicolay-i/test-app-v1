@@ -12,6 +12,8 @@ export type JuryPacketResult = {
   files: string[];
 };
 
+export type JuryBlindMode = "none" | "light" | "strict";
+
 export type JuryReviewImportResult = {
   reviewPath: string;
 };
@@ -21,7 +23,7 @@ export async function exportJuryPacket(options: {
   runDir: string;
   trajectoryId: string;
   outPath: string;
-  blind: boolean;
+  blindMode: JuryBlindMode;
 }): Promise<JuryPacketResult> {
   const trajectoryArtifactsPath = path.join(options.runDir, "artifacts", options.trajectoryId);
   const summary = JSON.parse(
@@ -32,12 +34,16 @@ export async function exportJuryPacket(options: {
   await ensureDir(path.join(options.outPath, "diffs"));
   await ensureDir(path.join(options.outPath, "screenshots"));
 
-  await writeFile(path.join(options.outPath, "README.md"), renderReadme(summary, options.blind), "utf8");
+  await writeFile(path.join(options.outPath, "README.md"), renderReadme(summary, options.blindMode), "utf8");
   await writeFile(path.join(options.outPath, "review-form.md"), renderReviewForm(), "utf8");
   await writeFile(path.join(options.outPath, "requirements.md"), await renderRequirements(options.rootDir, summary), "utf8");
-  await writeFile(path.join(options.outPath, "check-results-summary.md"), await renderCheckResults(summary), "utf8");
-  await writeFile(path.join(options.outPath, "code-health-summary.md"), renderCodeHealth(summary), "utf8");
-  await writeFile(path.join(options.outPath, "metadata-blind.json"), JSON.stringify(renderBlindMetadata(summary), null, 2), "utf8");
+  if (options.blindMode !== "strict") {
+    await writeFile(path.join(options.outPath, "check-results-summary.md"), await renderCheckResults(summary), "utf8");
+    await writeFile(path.join(options.outPath, "code-health-summary.md"), renderCodeHealth(summary), "utf8");
+    await writeFile(path.join(options.outPath, "metadata-blind.json"), JSON.stringify(renderBlindMetadata(summary, options.blindMode), null, 2), "utf8");
+  } else {
+    await writeFile(path.join(options.outPath, "metadata-strict.json"), JSON.stringify({ schema_version: summary.schema_version, task_id: summary.task_id, versions: summary.versions.map((version) => version.version_id) }, null, 2), "utf8");
+  }
 
   for (const version of summary.versions) {
     const versionArtifactsPath = path.join(trajectoryArtifactsPath, version.version_id);
@@ -97,14 +103,14 @@ export async function importJuryReview(options: {
   };
 }
 
-function renderReadme(summary: TrajectorySummary, blind: boolean): string {
+function renderReadme(summary: TrajectorySummary, blindMode: JuryBlindMode): string {
   return [
     "# Jury Packet",
     "",
-    `Blind: ${blind}`,
+    `Blind mode: ${blindMode}`,
     `Task: ${summary.task_id}`,
     `Versions evaluated: ${summary.versions.map((version) => version.version_id).join(", ")}`,
-    `First failed version: ${summary.first_failed_version ?? "none"}`,
+    ...(blindMode === "strict" ? [] : [`First failed version: ${summary.first_failed_version ?? "none"}`]),
     "",
     "This packet is intended for external review of behavior, regression preservation, and code maintainability."
   ].join("\n");
@@ -149,7 +155,7 @@ async function renderCheckResults(summary: TrajectorySummary): Promise<string> {
   for (const version of summary.versions) {
     lines.push(`## ${version.version_id}`);
     lines.push(`Status: ${version.status}`);
-    lines.push(`Score: ${version.score.toFixed(3)}`);
+    lines.push(`Score: ${version.score === null ? "unavailable" : version.score.toFixed(3)}`);
     lines.push(`Failure classification: ${version.failure_classification}`);
     lines.push(`Failed checks: ${version.failed_checks.join(", ") || "none"}`);
     lines.push(`Repair attempts: ${version.repair_attempts}`);
@@ -178,11 +184,11 @@ function renderCodeHealth(summary: TrajectorySummary): string {
   ].join("\n");
 }
 
-function renderBlindMetadata(summary: TrajectorySummary): Record<string, unknown> {
+function renderBlindMetadata(summary: TrajectorySummary, blindMode: JuryBlindMode): Record<string, unknown> {
   return {
     schema_version: summary.schema_version,
     task_id: summary.task_id,
-    run_type: summary.run_type,
+    ...(blindMode === "none" ? { run_type: summary.run_type } : {}),
     total_versions_requested: summary.total_versions_requested,
     survived_versions: summary.survived_versions,
     first_failed_version: summary.first_failed_version,
@@ -222,6 +228,12 @@ async function copyScreenshots(sourceDir: string, destinationDir: string): Promi
 async function createSourceSnapshot(workspacePath: string, outPath: string): Promise<void> {
   const snapshotDir = path.join(outPath, "source-snapshot");
   await copyDirFiltered(workspacePath, snapshotDir);
+  await rm(path.join(snapshotDir, ".ape-trajectory.json"), { force: true });
+  await rm(path.join(snapshotDir, ".ape-git-init.log"), { force: true });
+  await rm(path.join(snapshotDir, ".ape-git-config-email.log"), { force: true });
+  await rm(path.join(snapshotDir, ".ape-git-config-name.log"), { force: true });
+  await rm(path.join(snapshotDir, ".ape-git-add.log"), { force: true });
+  await rm(path.join(snapshotDir, ".ape-git-commit.log"), { force: true });
   try {
     await execFileAsync("zip", ["-qr", "source-snapshot.zip", "source-snapshot"], { cwd: outPath, timeout: 120000 });
     await rm(snapshotDir, { recursive: true, force: true });

@@ -1,0 +1,11 @@
+{
+  "source_commit": "6385653fb1d26db0fe8485534bb36aae7f2fbf2a",
+  "command": "pnpm bench run-one --task todomvc --model deepseek-v4-flash-free --system S2-maintainable-simple --user U3-semantic-ui --edit E2-smallest-maintainable-change --versions 2 --run-type real --run 61",
+  "execution_id": "20260710T060412Z-real-c773cd",
+  "run_type": "real",
+  "versions": ["v0", "v1", "v2"],
+  "result": "passed",
+  "score_by_version": { "v0": 1, "v1": 1, "v2": 1 },
+  "repair_attempts_total": 2,
+  "verification": "pnpm bench verify-run --execution 20260710T060412Z-real-c773cd"
+}

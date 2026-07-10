@@ -1,0 +1,8 @@
+{
+  "command": "pnpm bench negotiate-one --task todomvc --scenario 03-underspecified-tags --model deepseek-v4-flash-free --system S2-maintainable-simple --run-type real --run 5",
+  "result": "terminal_protocol_failure_recorded",
+  "decision": "unknown",
+  "clarification_score": 0,
+  "protocol_violation": "preflight_modified_workspace",
+  "implementation_workspace_created": false
+}

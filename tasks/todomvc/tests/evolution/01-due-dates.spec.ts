@@ -35,13 +35,36 @@ test("creates todos with and without due dates", async ({ page }) => {
 test("due dates persist and overdue active todos are marked", async ({ page }) => {
   await page.goto("/");
 
+  await addTodo(page, "Reference active task");
   const dueDate = await dueDateInput(page);
   await dueDate.fill("2000-01-01");
   await addTodo(page, "Overdue task");
   await page.reload();
 
   const row = todoRow(page, "Overdue task");
+  const referenceRow = todoRow(page, "Reference active task");
   await expect(row).toBeVisible();
   await expect(row).toContainText(/2000-01-01|Jan 1,? 2000|1\/1\/2000|01\.01\.2000/);
-  await expect(row).toHaveClass(/overdue|late|past-due/);
+  const [overdueAppearance, referenceAppearance] = await Promise.all([
+    visualSignature(row),
+    visualSignature(referenceRow)
+  ]);
+  expect(overdueAppearance).not.toBe(referenceAppearance);
 });
+
+async function visualSignature(locator: import("@playwright/test").Locator) {
+  return locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [
+      style.color,
+      style.backgroundColor,
+      style.borderColor,
+      style.fontWeight,
+      style.fontStyle,
+      style.textDecorationLine,
+      style.opacity,
+      style.outlineColor,
+      style.boxShadow
+    ].join("|");
+  });
+}

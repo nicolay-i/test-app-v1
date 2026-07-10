@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { cpus } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { aggregateRun } from "./aggregation.js";
+import { aggregateRun, aggregateRuns } from "./aggregation.js";
 import { runCommand } from "./command.js";
 import { loadMatrixConfig } from "./config.js";
 import { EventLogger } from "./events.js";
+import { createOrResumeExecution, finalizeExecution } from "./execution.js";
 import { evaluateWorkspace, type EvaluationResult } from "./evaluator.js";
 import { ensureDir, pathExists, resolveFromRoot, writeFileIfMissing } from "./fs.js";
-import { exportJuryPacket, importJuryReview } from "./juryPacket.js";
+import { exportJuryPacket, importJuryReview, type JuryBlindMode } from "./juryPacket.js";
 import { buildTrajectoryPlan } from "./matrix.js";
 import { writeMockTodoMvc, type MockTodoMvcVariant } from "./mockGenerator.js";
 import {
@@ -20,6 +21,8 @@ import {
   scenarioEvolutionStepIndex
 } from "./negotiation.js";
 import { runOpenCode, type OpenCodeRunResult } from "./opencodeAdapter.js";
+import { parseOpenCodeEvents } from "./opencodeEventParser.js";
+import { verifyOpenCodeEventParserFixtures } from "./opencodeEventParser.fixtures.js";
 import { compileEditPrompt, compileRepairPrompt, compileV0Prompt } from "./promptCompiler.js";
 import { scoreV0, type VersionScore } from "./scoring.js";
 import { loadTaskEvolution } from "./task.js";
@@ -32,7 +35,9 @@ import {
   writeRunMetadata,
   writeRunReport,
   buildTrajectorySummary,
+  buildTerminalVersionSummary,
   readDiffMetrics,
+  writeTerminalRunReport,
   type RunMetadata,
   type RunType,
   type TrajectoryVersionSummary
@@ -76,6 +81,7 @@ import {
 import { validateTaskWithPathChecks } from "./task.js";
 import type { MatrixConfig, TrajectoryPlan } from "./types.js";
 import { captureGitDiff, commitWorkspaceVersion, prepareWorkspace } from "./workspace.js";
+import { createArtifactManifest, verifyExecution } from "./verification.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -94,6 +100,7 @@ async function main(): Promise<void> {
         await initCommand();
         break;
       case "preflight":
+      case "doctor":
         await preflightCommand(args);
         break;
       case "validate-task":
@@ -111,11 +118,20 @@ async function main(): Promise<void> {
       case "aggregate":
         await aggregateCommand(args);
         break;
+      case "verify-run":
+        await verifyRunCommand(args);
+        break;
+      case "verify-opencode-parser":
+        await verifyOpenCodeParserCommand();
+        break;
       case "negotiate-one":
         await negotiateOneCommand(args);
         break;
       case "export-jury-packet":
         await exportJuryPacketCommand(args);
+        break;
+      case "export-jury-pair":
+        await exportJuryPairCommand(args);
         break;
       case "import-jury-review":
         await importJuryReviewCommand(args);
@@ -211,13 +227,30 @@ async function runOneCommand(args: CliArgs): Promise<void> {
   const mockOpenCode = booleanOption(args, "mock-opencode", false);
   const runType = readRunType(args, mockOpenCode);
   const useMockOpenCode = mockOpenCode || runType === "mock";
+  const mockProfile = stringOption(args, "mock-profile", "happy");
   const requestedVersions = numberOption(args, "versions", 0);
   const skipInstall = booleanOption(args, "skip-install", false);
   const selectedBase = selectTrajectory(config, args);
   const selected = dryRun
     ? { ...selectedBase, trajectoryId: `${selectedBase.trajectoryId}__dry-run` }
     : selectedBase;
-  const runDir = path.join(rootDir, config.outputDir, config.id);
+  const matrixRoot = path.join(rootDir, config.outputDir, config.id);
+  const resumeExecutionId = optionalStringOption(args, "resume");
+  const matrixChildResume = booleanOption(args, "matrix-child-resume", false);
+  assertExecutionMode(args, resumeExecutionId);
+  const execution = await createOrResumeExecution({
+    rootDir,
+    matrixRoot,
+    configPath,
+    config,
+    trajectories: [selected],
+    runType,
+    requestedVersions,
+    mockProfile: useMockOpenCode ? mockProfile : null,
+    ...(matrixChildResume ? { allowTrajectorySubset: true } : {}),
+    ...(resumeExecutionId ? { resumeExecutionId } : {})
+  });
+  const runDir = execution.rootPath;
   const trajectoryArtifactsPath = path.join(runDir, "artifacts", selected.trajectoryId);
   const artifactsPath = path.join(runDir, "artifacts", selected.trajectoryId, "v0");
   const logger = new EventLogger(runDir, config.id);
@@ -243,7 +276,8 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     rootDir,
     runDir,
     scaffoldPath,
-    trajectory: selected
+    trajectory: selected,
+    executionId: execution.executionId
   });
   const compiled = await compileV0Prompt({
     rootDir,
@@ -253,6 +287,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
   });
 
   console.log(`trajectory: ${selected.trajectoryId}`);
+  console.log(`execution: ${execution.executionId}${execution.resumed ? " (resumed)" : ""}`);
   console.log(`run type: ${runType}`);
   console.log(`edit versions: ${editVersions}`);
   console.log(`workspace: ${workspace.workspacePath}`);
@@ -260,6 +295,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
 
   let metadata: RunMetadata = buildInitialRunMetadata({
     runType,
+    executionId: execution.executionId,
     trajectory: selected,
     versionId: "v0",
     workspacePath: workspace.workspacePath,
@@ -284,6 +320,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       });
       const editMetadata = buildInitialRunMetadata({
         runType,
+        executionId: execution.executionId,
         trajectory: selected,
         versionId,
         workspacePath: workspace.workspacePath,
@@ -316,11 +353,12 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         promptPath: compiled.promptPath
       }
     });
+    await finalizeExecution(execution, "completed");
     return;
   }
 
   const opencode = useMockOpenCode
-    ? await runMockOpenCode(workspace.workspacePath, artifactsPath, undefined)
+    ? await runMockOpenCode(workspace.workspacePath, artifactsPath, undefined, mockProfile)
     : await runOpenCode({
         model: selected.providerModel,
         cwd: workspace.workspacePath,
@@ -370,16 +408,36 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       failure_classification: "opencode_failure"
     };
     await writeRunMetadata(artifactsPath, metadata);
+    versionSummaries.push(
+      await buildTerminalVersionSummary({
+        versionId: "v0",
+        classification: "opencode_failure",
+        failedPhase: "opencode_run",
+        artifactsPath
+      })
+    );
+    await writeTerminalRunReport({ artifactsPath, metadata, failureSummary: opencodeSummary });
+    await writeTrajectoryArtifacts(
+      trajectoryArtifactsPath,
+      buildTrajectorySummary({ trajectory: selected, runType, versionsRequested: editVersions, versions: versionSummaries, totalLatencyMs })
+    );
+    await finalizeExecution(execution, "failed");
     throw new Error(`OpenCode failed with exit code ${opencode.exitCode}`);
   }
 
-  let evalResult = await evaluateWorkspace({
-    workspacePath: workspace.workspacePath,
-    taskId: selected.taskId,
-    versionId: "v0",
-    artifactsPath,
-    skipInstall
-  });
+  let evalResult: EvaluationResult;
+  try {
+    evalResult = await evaluateWorkspace({
+      workspacePath: workspace.workspacePath,
+      taskId: selected.taskId,
+      versionId: "v0",
+      artifactsPath,
+      skipInstall
+    });
+  } catch (error) {
+    await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath, metadata, versionId: "v0", error });
+    throw error;
+  }
   let failureSummary = buildFailureSummary(evalResult);
   await writeFailureSummary(artifactsPath, failureSummary);
   let score = await scoreV0(evalResult, artifactsPath, runType);
@@ -389,6 +447,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     trajectory: selected,
     runType,
     useMockOpenCode,
+    mockProfile,
     workspacePath: workspace.workspacePath,
     versionId: "v0",
     artifactsPath,
@@ -460,6 +519,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
 
   if (evalResult.status === "failed") {
     process.exitCode = 1;
+    await finalizeExecution(execution, "failed");
     return;
   }
 
@@ -480,6 +540,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     });
     let editMetadata = buildInitialRunMetadata({
       runType,
+      executionId: execution.executionId,
       trajectory: selected,
       versionId,
       workspacePath: workspace.workspacePath,
@@ -490,7 +551,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     await writeRunMetadata(editArtifactsPath, editMetadata);
 
     const editOpenCode = useMockOpenCode
-      ? await runMockOpenCode(workspace.workspacePath, editArtifactsPath, index)
+      ? await runMockOpenCode(workspace.workspacePath, editArtifactsPath, index, mockProfile)
       : await runOpenCode({
           model: selected.providerModel,
           cwd: workspace.workspacePath,
@@ -529,17 +590,37 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         failure_classification: "opencode_failure"
       };
       await writeRunMetadata(editArtifactsPath, editMetadata);
+      versionSummaries.push(
+        await buildTerminalVersionSummary({
+          versionId,
+          classification: "opencode_failure",
+          failedPhase: "opencode_run",
+          artifactsPath: editArtifactsPath
+        })
+      );
+      await writeTerminalRunReport({ artifactsPath: editArtifactsPath, metadata: editMetadata, failureSummary: editOpencodeSummary });
+      await writeTrajectoryArtifacts(
+        trajectoryArtifactsPath,
+        buildTrajectorySummary({ trajectory: selected, runType, versionsRequested: editVersions, versions: versionSummaries, totalLatencyMs })
+      );
+      await finalizeExecution(execution, "failed");
       throw new Error(`OpenCode failed for ${versionId} with exit code ${editOpenCode.exitCode}`);
     }
 
-    let editEvalResult = await evaluateWorkspace({
-      workspacePath: workspace.workspacePath,
-      taskId: selected.taskId,
-      versionId,
-      artifactsPath: editArtifactsPath,
-      evolutionStepIndex: index,
-      skipInstall
-    });
+    let editEvalResult: EvaluationResult;
+    try {
+      editEvalResult = await evaluateWorkspace({
+        workspacePath: workspace.workspacePath,
+        taskId: selected.taskId,
+        versionId,
+        artifactsPath: editArtifactsPath,
+        evolutionStepIndex: index,
+        skipInstall
+      });
+    } catch (error) {
+      await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath: editArtifactsPath, metadata: editMetadata, versionId, error });
+      throw error;
+    }
     let editFailureSummary = buildFailureSummary(editEvalResult);
     await writeFailureSummary(editArtifactsPath, editFailureSummary);
     let editScore = await scoreV0(editEvalResult, editArtifactsPath, runType);
@@ -549,6 +630,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       trajectory: selected,
       runType,
       useMockOpenCode,
+      mockProfile,
       workspacePath: workspace.workspacePath,
       versionId,
       artifactsPath: editArtifactsPath,
@@ -622,9 +704,11 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     previousFailureMessages = editFailureSummary.messages;
     if (editEvalResult.status === "failed") {
       process.exitCode = 1;
+      await finalizeExecution(execution, "failed");
       return;
     }
   }
+  await finalizeExecution(execution, "completed");
 }
 
 async function buildVersionSummary(options: {
@@ -640,6 +724,8 @@ async function buildVersionSummary(options: {
     status: options.evaluation.status === "passed" ? "passed" : "failed",
     score: options.score.scores.version_quality_smoke_score,
     failure_classification: options.failureSummary.classification,
+    failed_phase: options.failureSummary.failed_phase,
+    evaluation_completed: true,
     failed_checks: options.failureSummary.failed_checks,
     repair_attempts: options.repairAttempts ?? 0,
     repair_success: options.repairSuccess ?? false,
@@ -648,6 +734,38 @@ async function buildVersionSummary(options: {
     diff: await readDiffMetrics(path.join(options.artifactsPath, "git.diff")),
     artifacts_path: options.artifactsPath
   };
+}
+
+async function finalizeUnhandledVersion(options: {
+  execution: Awaited<ReturnType<typeof createOrResumeExecution>>;
+  trajectory: TrajectoryPlan;
+  runType: RunType;
+  editVersions: number;
+  versionSummaries: TrajectoryVersionSummary[];
+  totalLatencyMs: number;
+  trajectoryArtifactsPath: string;
+  artifactsPath: string;
+  metadata: RunMetadata;
+  versionId: string;
+  error: unknown;
+}): Promise<void> {
+  const message = options.error instanceof Error ? options.error.message : String(options.error);
+  const failure = {
+    status: "failed" as const,
+    classification: "harness_failure" as const,
+    failed_phase: "evaluation_running",
+    failed_checks: ["evaluation_running"],
+    infra_suspected: false,
+    messages: [message],
+    artifact_paths: {}
+  };
+  await writeFailureSummary(options.artifactsPath, failure);
+  const metadata = { ...options.metadata, completed_at: new Date().toISOString(), status: "failed" as const, failure_classification: "harness_failure" as const };
+  await writeRunMetadata(options.artifactsPath, metadata);
+  await writeTerminalRunReport({ artifactsPath: options.artifactsPath, metadata, failureSummary: failure });
+  options.versionSummaries.push(await buildTerminalVersionSummary({ versionId: options.versionId, classification: "harness_failure", failedPhase: "evaluation_running", artifactsPath: options.artifactsPath }));
+  await writeTrajectoryArtifacts(options.trajectoryArtifactsPath, buildTrajectorySummary({ trajectory: options.trajectory, runType: options.runType, versionsRequested: options.editVersions, versions: options.versionSummaries, totalLatencyMs: options.totalLatencyMs }));
+  await finalizeExecution(options.execution, "failed");
 }
 
 type RepairResult = {
@@ -666,6 +784,7 @@ async function maybeRepairVersion(options: {
   trajectory: TrajectoryPlan;
   runType: RunType;
   useMockOpenCode: boolean;
+  mockProfile: string;
   workspacePath: string;
   versionId: string;
   artifactsPath: string;
@@ -690,7 +809,7 @@ async function maybeRepairVersion(options: {
     artifactPaths: options.failureSummary.artifact_paths
   });
   const repairOpenCode = options.useMockOpenCode
-    ? await runMockOpenCode(options.workspacePath, repairArtifactsPath, options.evolutionStepIndex)
+    ? await runMockOpenCode(options.workspacePath, repairArtifactsPath, options.evolutionStepIndex, options.mockProfile, true)
     : await runOpenCode({
         model: options.trajectory.providerModel,
         cwd: options.workspacePath,
@@ -779,26 +898,55 @@ function shouldAttemptRepair(failedChecks: string[]): boolean {
 async function runMockOpenCode(
   workspacePath: string,
   artifactsPath: string,
-  evolutionStepIndex?: number
+  evolutionStepIndex?: number,
+  profile = "happy",
+  repair = false
 ): Promise<OpenCodeRunResult> {
   const startedAt = Date.now();
+  const versionId = `v${(evolutionStepIndex ?? -1) + 1}`;
+  const fail =
+    (profile === "opencode-fail-v0" && evolutionStepIndex === undefined) ||
+    (profile === "opencode-fail-v2" && evolutionStepIndex === 1) ||
+    (profile === "timeout-v0" && evolutionStepIndex === undefined);
   const variant = mockVariantForEvolutionStep(evolutionStepIndex);
-  await writeMockTodoMvc(workspacePath, variant);
+  if (!fail) {
+    await writeMockTodoMvc(workspacePath, variant);
+    if (profile === "build-fail-v2-repair-success" && evolutionStepIndex === 1 && !repair) {
+      await writeFile(path.join(workspacePath, "src", "main.tsx"), "this is intentionally invalid TypeScript\n", "utf8");
+    }
+    if (profile === "e2e-fail-v2-repair-fail" && evolutionStepIndex === 1) {
+      const mainPath = path.join(workspacePath, "src", "main.tsx");
+      const source = await readFile(mainPath, "utf8");
+      await writeFile(mainPath, source.replace('aria-label="Search"', 'aria-label="Unavailable"'), "utf8");
+    }
+  }
   await ensureDir(artifactsPath);
-  await writeFile(path.join(artifactsPath, "opencode.stdout.log"), `mock-opencode generated TodoMVC locally (${variant})\n`, "utf8");
-  await writeFile(path.join(artifactsPath, "opencode.stderr.log"), "", "utf8");
+  const eventLine = JSON.stringify({ type: "text.delta", sessionId: "mock", delta: fail ? "mock failure" : `generated ${variant}` });
+  const events = profile === "malformed-events" ? `${eventLine}\nnot-json\n` : `${eventLine}\n`;
+  await writeFile(path.join(artifactsPath, "opencode.stdout.log"), events, "utf8");
+  await writeFile(path.join(artifactsPath, "opencode.stderr.log"), fail ? `mock profile ${profile} failed ${versionId}\n` : "", "utf8");
   await writeFile(
     path.join(artifactsPath, "opencode.events.jsonl"),
-    `${JSON.stringify({ type: "mock_generation", status: "completed", variant })}\n`,
+    events,
     "utf8"
   );
+  const eventsPath = path.join(artifactsPath, "opencode.events.jsonl");
+  const parsed = parseOpenCodeEvents(await readFile(eventsPath, "utf8"));
+  const resultPath = path.join(artifactsPath, "opencode-result.json");
+  const assistantResponsePath = path.join(artifactsPath, "assistant-response.md");
+  await writeFile(resultPath, JSON.stringify(parsed, null, 2), "utf8");
+  await writeFile(assistantResponsePath, parsed.assistantText, "utf8");
   return {
-    ok: true,
-    exitCode: 0,
+    ok: !fail,
+    exitCode: fail ? null : 0,
     durationMs: Date.now() - startedAt,
     stdoutPath: path.join(artifactsPath, "opencode.stdout.log"),
     stderrPath: path.join(artifactsPath, "opencode.stderr.log"),
-    eventsPath: path.join(artifactsPath, "opencode.events.jsonl")
+    eventsPath,
+    resultPath,
+    assistantResponsePath,
+    parsed,
+    ...(fail ? { error: profile === "timeout-v0" ? `Timed out after mock profile ${profile}` : `mock profile ${profile} failed ${versionId}` } : {})
   };
 }
 
@@ -858,8 +1006,8 @@ async function preflightCommand(args: CliArgs): Promise<void> {
   const rootDir = process.cwd();
   const configPath = resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml"));
   const config = await loadMatrixConfig(configPath);
-  const runDir = path.join(rootDir, config.outputDir, config.id);
-  const logger = new EventLogger(runDir, config.id);
+  const matrixRoot = path.join(rootDir, config.outputDir, config.id);
+  const logger = new EventLogger(matrixRoot, config.id);
 
   await logger.write({
     level: "info",
@@ -948,14 +1096,29 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
   const configPath = resolveFromRoot(rootDir, configOption);
   const dryRun = booleanOption(args, "dry-run", false);
   const config = await loadMatrixConfig(configPath);
-  const runDir = path.join(rootDir, config.outputDir, config.id);
-  const logger = new EventLogger(runDir, config.id);
+  const matrixRoot = path.join(rootDir, config.outputDir, config.id);
   const maxTrajectories = optionalNumberOption(args, "max-trajectories");
   const requestedVersions = optionalNumberOption(args, "versions") ?? (dryRun ? config.maxVersions : 0);
   const runType = readRunType(args, booleanOption(args, "mock-opencode", false));
+  const mockProfile = stringOption(args, "mock-profile", "happy");
   const skipInstall = booleanOption(args, "skip-install", false);
-  const resume = booleanOption(args, "resume", true);
   const plan = buildTrajectoryPlan(config).slice(0, maxTrajectories ?? undefined);
+  const resumeExecutionId = optionalStringOption(args, "resume");
+  assertExecutionMode(args, resumeExecutionId);
+  const resume = Boolean(resumeExecutionId);
+  const execution = await createOrResumeExecution({
+    rootDir,
+    matrixRoot,
+    configPath,
+    config,
+    trajectories: plan,
+    runType,
+    requestedVersions,
+    mockProfile: runType === "mock" ? mockProfile : null,
+    ...(resumeExecutionId ? { resumeExecutionId } : {})
+  });
+  const runDir = execution.rootPath;
+  const logger = new EventLogger(runDir, config.id);
 
   await logger.write({
     level: "info",
@@ -970,6 +1133,7 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
   });
 
   console.log(`matrix id: ${config.id}`);
+  console.log(`execution: ${execution.executionId}${execution.resumed ? " (resumed)" : ""}`);
   console.log(`trajectories: ${plan.length}`);
   console.log(`version steps: ${plan.length * (requestedVersions + 1)}`);
   console.log(`concurrency: ${config.concurrency}`);
@@ -994,13 +1158,16 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
       config,
       configOption,
       runDir,
+      executionId: execution.executionId,
       plan,
       runType,
+      mockProfile,
       requestedVersions,
       skipInstall,
       resume
     });
     const aggregate = await aggregateRun(runDir);
+    await finalizeExecution(execution, result.failed === 0 ? "completed" : "failed");
     await logger.write({
       level: result.failed === 0 ? "info" : "warn",
       phase: "run_matrix",
@@ -1028,6 +1195,7 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
       firstTrajectory: plan[0]?.trajectoryId ?? null
     }
   });
+  await finalizeExecution(execution, "completed");
 }
 
 async function executeMatrix(options: {
@@ -1035,8 +1203,10 @@ async function executeMatrix(options: {
   config: MatrixConfig;
   configOption: string;
   runDir: string;
+  executionId: string;
   plan: TrajectoryPlan[];
   runType: RunType;
+  mockProfile: string;
   requestedVersions: number;
   skipInstall: boolean;
   resume: boolean;
@@ -1089,8 +1259,14 @@ async function executeMatrix(options: {
         "--versions",
         String(options.requestedVersions),
         "--run-type",
-        options.runType
+        options.runType,
+        "--matrix-child-resume",
+        "--resume",
+        options.executionId
       ];
+      if (options.runType === "mock") {
+        commandArgs.push("--mock-profile", options.mockProfile);
+      }
       if (options.skipInstall) {
         commandArgs.push("--skip-install");
       }
@@ -1115,8 +1291,16 @@ async function aggregateCommand(args: CliArgs): Promise<void> {
   const rootDir = process.cwd();
   const configPath = resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml"));
   const config = await loadMatrixConfig(configPath);
-  const runDir = path.join(rootDir, config.outputDir, config.id);
-  const result = await aggregateRun(runDir);
+  const matrixRoot = path.join(rootDir, config.outputDir, config.id);
+  const executionIds = stringOption(args, "executions", optionalStringOption(args, "execution") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const runDirs = executionIds.length > 0 ? executionIds.map((id) => path.join(matrixRoot, "executions", id)) : [matrixRoot];
+  for (const [index, runDir] of runDirs.entries()) {
+    if (executionIds[index] && !(await pathExists(path.join(runDir, "execution-manifest.json")))) throw new Error(`Execution not found: ${executionIds[index]}`);
+  }
+  const result = runDirs.length === 1 ? await aggregateRun(runDirs[0]!) : await aggregateRuns(runDirs, path.join(matrixRoot, "aggregates", executionIds.join("__")));
 
   console.log(`aggregated trajectories: ${result.trajectoryCount}`);
   console.log(`aggregated versions: ${result.versionCount}`);
@@ -1124,6 +1308,26 @@ async function aggregateCommand(args: CliArgs): Promise<void> {
   console.log(`version results: ${result.outputs.versionResultsJsonl}`);
   console.log(`scores: ${result.outputs.scoresCsv}`);
   console.log(`leaderboard: ${result.outputs.leaderboardMd}`);
+}
+
+async function verifyRunCommand(args: CliArgs): Promise<void> {
+  const rootDir = process.cwd();
+  const config = await loadMatrixConfig(resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml")));
+  const executionId = stringOption(args, "execution", "");
+  if (!executionId) throw new Error("verify-run requires --execution <execution-id>");
+  const executionPath = path.join(rootDir, config.outputDir, config.id, "executions", executionId);
+  const result = await verifyExecution(executionPath);
+  const manifest = await createArtifactManifest(executionPath);
+  await writeFile(path.join(executionPath, "artifact-manifest.json"), JSON.stringify({ files: manifest }, null, 2), "utf8");
+  console.log(`verified files: ${result.files}`);
+  for (const error of result.errors) console.log(`error: ${error}`);
+  if (!result.ok) process.exitCode = 1;
+}
+
+async function verifyOpenCodeParserCommand(): Promise<void> {
+  const failures = verifyOpenCodeEventParserFixtures();
+  if (failures.length) throw new Error(`OpenCode parser fixture failures: ${failures.join(", ")}`);
+  console.log("OpenCode parser fixtures: passed");
 }
 
 async function negotiateOneCommand(args: CliArgs): Promise<void> {
@@ -1155,12 +1359,12 @@ async function negotiateOneCommand(args: CliArgs): Promise<void> {
   const negotiationId = [taskId, scenario.id, model.id, systemPromptId, `r${runNumber}`].join("__");
   const artifactsPath = path.join(runDir, "negotiation", negotiationId);
   const scaffoldPath = resolveFromRoot(rootDir, config.scaffold.path);
-  const workspace = await prepareWorkspace({
+  const preflightWorkspace = await prepareWorkspace({
     rootDir,
     runDir,
     scaffoldPath,
     trajectory: {
-      trajectoryId: `negotiation__${negotiationId}`,
+      trajectoryId: `negotiation-preflight__${negotiationId}`,
       taskId,
       modelId: model.id,
       providerModel: model.providerModel,
@@ -1169,26 +1373,52 @@ async function negotiateOneCommand(args: CliArgs): Promise<void> {
       editPromptId: scenario.id,
       runNumber,
       versions: [scenario.version]
-    }
+    },
+    executionId: `negotiation-preflight-${negotiationId}`
   });
   const result = await runNegotiationPreflight({
     artifactsPath,
     scenario,
     runType,
     providerModel: model.providerModel,
-    workspacePath: workspace.workspacePath,
+    workspacePath: preflightWorkspace.workspacePath,
     opencodeFormat: config.opencode.format,
     autoApprove: config.opencode.autoApprove,
     timeoutMs: config.opencode.timeoutMs
   });
+  const preflightDiffPath = path.join(artifactsPath, "preflight.git.diff");
+  await captureGitDiff(preflightWorkspace.workspacePath, preflightDiffPath);
+  const preflightDiff = await readFile(preflightDiffPath, "utf8");
+  await writeFile(
+    path.join(artifactsPath, "protocol-violation.json"),
+    JSON.stringify({ preflight_workspace: preflightWorkspace.workspacePath, changed_files: preflightDiff ? true : false, protocol_violation: preflightDiff ? "preflight_modified_workspace" : null }, null, 2),
+    "utf8"
+  );
   if (full) {
+    const implementationWorkspace = await prepareWorkspace({
+      rootDir,
+      runDir,
+      scaffoldPath,
+      trajectory: {
+        trajectoryId: `negotiation-implementation__${negotiationId}`,
+        taskId,
+        modelId: model.id,
+        providerModel: model.providerModel,
+        systemPromptId,
+        userPromptId: "negotiation",
+        editPromptId: scenario.id,
+        runNumber,
+        versions: [scenario.version]
+      },
+      executionId: `negotiation-implementation-${negotiationId}`
+    });
     await runFullNegotiationImplementation({
       taskId,
       scenario,
       runType,
       model,
       config,
-      workspacePath: workspace.workspacePath,
+      workspacePath: implementationWorkspace.workspacePath,
       artifactsPath: path.join(artifactsPath, "implementation"),
       skipInstall
     });
@@ -1291,15 +1521,18 @@ async function exportJuryPacketCommand(args: CliArgs): Promise<void> {
   if (!trajectoryId) {
     throw new Error("export-jury-packet requires --trajectory");
   }
-  const runDir = path.join(rootDir, config.outputDir, config.id);
+  const matrixRoot = path.join(rootDir, config.outputDir, config.id);
+  const executionId = optionalStringOption(args, "execution");
+  const runDir = executionId ? path.join(matrixRoot, "executions", executionId) : matrixRoot;
   const outPath = resolveFromRoot(rootDir, stringOption(args, "out", path.join("jury-packets", trajectoryId)));
-  const blind = booleanOption(args, "blind", false);
+  const strictBlind = booleanOption(args, "strict-blind", false);
+  const blindMode: JuryBlindMode = strictBlind ? "strict" : booleanOption(args, "blind", false) ? "light" : "none";
   const result = await exportJuryPacket({
     rootDir,
     runDir,
     trajectoryId,
     outPath,
-    blind
+    blindMode
   });
 
   console.log(`jury packet: ${result.packetPath}`);
@@ -1319,7 +1552,9 @@ async function importJuryReviewCommand(args: CliArgs): Promise<void> {
   if (!reviewPath) {
     throw new Error("import-jury-review requires --review");
   }
-  const runDir = path.join(rootDir, config.outputDir, config.id);
+  const matrixRoot = path.join(rootDir, config.outputDir, config.id);
+  const executionId = optionalStringOption(args, "execution");
+  const runDir = executionId ? path.join(matrixRoot, "executions", executionId) : matrixRoot;
   const result = await importJuryReview({
     runDir,
     trajectoryId,
@@ -1328,6 +1563,35 @@ async function importJuryReviewCommand(args: CliArgs): Promise<void> {
   });
 
   console.log(`imported review: ${result.reviewPath}`);
+}
+
+async function exportJuryPairCommand(args: CliArgs): Promise<void> {
+  const rootDir = process.cwd();
+  const config = await loadMatrixConfig(resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml")));
+  const matrixRoot = path.join(rootDir, config.outputDir, config.id);
+  const leftExecution = stringOption(args, "left-execution", "");
+  const leftTrajectory = stringOption(args, "left-trajectory", "");
+  const rightExecution = stringOption(args, "right-execution", "");
+  const rightTrajectory = stringOption(args, "right-trajectory", "");
+  if (!leftExecution || !leftTrajectory || !rightExecution || !rightTrajectory) {
+    throw new Error("export-jury-pair requires --left-execution, --left-trajectory, --right-execution and --right-trajectory");
+  }
+  const outPath = resolveFromRoot(rootDir, stringOption(args, "out", "jury-packets/pairwise"));
+  const leftRunDir = path.join(matrixRoot, "executions", leftExecution);
+  const rightRunDir = path.join(matrixRoot, "executions", rightExecution);
+  for (const runDir of [leftRunDir, rightRunDir]) if (!(await pathExists(path.join(runDir, "execution-manifest.json")))) throw new Error(`Execution not found: ${path.basename(runDir)}`);
+  const [left, right] = await Promise.all([
+    exportJuryPacket({ rootDir, runDir: leftRunDir, trajectoryId: leftTrajectory, outPath: path.join(outPath, "Variant-A"), blindMode: "strict" }),
+    exportJuryPacket({ rootDir, runDir: rightRunDir, trajectoryId: rightTrajectory, outPath: path.join(outPath, "Variant-B"), blindMode: "strict" })
+  ]);
+  const mappingDir = path.join(matrixRoot, "jury-pairwise-mappings");
+  await ensureDir(mappingDir);
+  const mappingPath = path.join(mappingDir, `${new Date().toISOString().replace(/[^0-9]/g, "")}.json`);
+  await writeFile(mappingPath, JSON.stringify({ variant_a: { execution_id: leftExecution, trajectory_id: leftTrajectory }, variant_b: { execution_id: rightExecution, trajectory_id: rightTrajectory } }, null, 2), "utf8");
+  console.log(`pairwise packet: ${outPath}`);
+  console.log(`variant A files: ${left.files.length}`);
+  console.log(`variant B files: ${right.files.length}`);
+  console.log(`private mapping: ${mappingPath}`);
 }
 
 function selectTrajectory(config: MatrixConfig, args: CliArgs): TrajectoryPlan {
@@ -1495,21 +1759,42 @@ function optionalNumberOption(args: CliArgs, key: string): number | undefined {
   return numberOption(args, key, 0);
 }
 
+function optionalStringOption(args: CliArgs, key: string): string | undefined {
+  if (!args.options.has(key)) return undefined;
+  return stringOption(args, key, "");
+}
+
+function assertExecutionMode(args: CliArgs, resumeExecutionId: string | undefined): void {
+  const fresh = booleanOption(args, "fresh", false);
+  const forceNewExecution = booleanOption(args, "force-new-execution", false);
+  if (resumeExecutionId && (fresh || forceNewExecution)) {
+    throw new Error("--resume cannot be combined with --fresh or --force-new-execution");
+  }
+}
+
 function printHelp(): void {
   console.log(`Usage:
   pnpm bench init
   pnpm bench validate-task tasks/todomvc
   pnpm bench preflight --config configs/mvp.yaml
+  pnpm bench doctor --config configs/mvp.yaml
   pnpm bench eval --workspace scaffolds/vite-react-ts --task todomvc --version v0
   pnpm bench eval --workspace <workspace> --task todomvc --version v1 --evolution-step-index 0
   pnpm bench run-one --task todomvc --model deepseek-v4-flash-free --system S2-maintainable-simple --user U3-semantic-ui --edit E2-smallest-maintainable-change --dry-run
   pnpm bench run-one --task todomvc --model deepseek-v4-flash-free --system S2-maintainable-simple --user U3-semantic-ui --edit E2-smallest-maintainable-change --mock-opencode
   pnpm bench run-one --task todomvc --model deepseek-v4-flash-free --system S2-maintainable-simple --user U5-maintainable --edit E2-smallest-maintainable-change --versions 4 --run-type mock
+  pnpm bench run-one --task todomvc ... --fresh
+  pnpm bench run-one --task todomvc ... --resume <execution-id>
   pnpm bench run-matrix --config configs/mvp.yaml --dry-run
-  pnpm bench aggregate --config configs/mvp.yaml
+  pnpm bench aggregate --config configs/mvp.yaml --execution <execution-id>
+  pnpm bench aggregate --config configs/mvp.yaml --executions <execution-id>,<execution-id>
+  pnpm bench verify-run --execution <execution-id>
+  pnpm bench verify-opencode-parser
   pnpm bench negotiate-one --task todomvc --scenario 03-underspecified-tags --model deepseek-v4-flash-free --system S2-maintainable-simple --run-type mock
   pnpm bench negotiate-one --task todomvc --scenario 03-underspecified-tags --model deepseek-v4-flash-free --system S2-maintainable-simple --run-type mock --full
   pnpm bench export-jury-packet --trajectory <trajectory-id> --blind --out jury-packets/<packet-id>
+  pnpm bench export-jury-packet --trajectory <trajectory-id> --strict-blind --out jury-packets/<packet-id>
+  pnpm bench export-jury-pair --left-execution <id> --left-trajectory <id> --right-execution <id> --right-trajectory <id> --out jury-packets/<packet-id>
   pnpm bench import-jury-review --trajectory <trajectory-id> --review jury-packets/<packet-id>/review-form.md --reviewer reviewer-1
 `);
 }

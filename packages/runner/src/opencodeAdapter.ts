@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ensureDir } from "./fs.js";
+import { parseOpenCodeEvents, type ParsedOpenCodeResult } from "./opencodeEventParser.js";
 
 export type OpenCodeRunRequest = {
   model: string;
@@ -22,6 +23,9 @@ export type OpenCodeRunResult = {
   stdoutPath: string;
   stderrPath: string;
   eventsPath: string;
+  resultPath: string;
+  assistantResponsePath: string;
+  parsed: ParsedOpenCodeResult;
   error?: string;
 };
 
@@ -88,7 +92,13 @@ export async function runOpenCode(request: OpenCodeRunRequest): Promise<OpenCode
 
   await writeFile(stdoutPath, stdout, "utf8");
   await writeFile(stderrPath, stderr, "utf8");
-  await writeFile(eventsPath, extractJsonLines(stdout), "utf8");
+  // OpenCode emits NDJSON. Preserve it verbatim so malformed lines remain auditable.
+  await writeFile(eventsPath, stdout, "utf8");
+  const parsed = parseOpenCodeEvents(stdout);
+  const resultPath = path.join(request.artifactsPath, "opencode-result.json");
+  const assistantResponsePath = path.join(request.artifactsPath, "assistant-response.md");
+  await writeFile(resultPath, JSON.stringify(parsed, null, 2), "utf8");
+  await writeFile(assistantResponsePath, parsed.assistantText, "utf8");
 
   const error = exitCode === 0 ? undefined : stderr.trim().split(/\r?\n/).slice(-5).join("\n");
 
@@ -99,16 +109,9 @@ export async function runOpenCode(request: OpenCodeRunRequest): Promise<OpenCode
     stdoutPath,
     stderrPath,
     eventsPath,
+    resultPath,
+    assistantResponsePath,
+    parsed,
     ...(error ? { error } : {})
   };
-}
-
-function extractJsonLines(stdout: string): string {
-  return stdout
-    .split(/\r?\n/)
-    .filter((line) => {
-      const trimmed = line.trim();
-      return trimmed.startsWith("{") && trimmed.endsWith("}");
-    })
-    .join("\n");
 }

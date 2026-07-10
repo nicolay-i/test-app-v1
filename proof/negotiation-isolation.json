@@ -1,0 +1,6 @@
+{
+  "command": "pnpm bench negotiate-one --task todomvc --scenario 03-underspecified-tags --model deepseek-v4-flash-free --system S2-maintainable-simple --run-type mock --full --run 4",
+  "result": "passed",
+  "preflight_workspace_isolated": true,
+  "protocol_violation": null
+}

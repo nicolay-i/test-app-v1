@@ -21,7 +21,7 @@ pnpm bench run-one \
 
 pnpm bench run-matrix --config configs/mvp.yaml --dry-run
 pnpm bench run-matrix --config configs/mvp.yaml --run-type mock --versions 2 --max-trajectories 2
-pnpm bench aggregate --config configs/mvp.yaml
+pnpm bench aggregate --config configs/mvp.yaml --execution <execution-id>
 
 pnpm bench negotiate-one \
   --task todomvc \
@@ -41,4 +41,8 @@ The runner supports a TodoMVC lifecycle trajectory: v0 generation, v1..v4 evolut
 
 `--run-type mock` uses a deterministic local generator and is excluded from the leaderboard. `--run-type real` invokes OpenCode and is eligible for leaderboard aggregation unless the trajectory is classified as an infra failure.
 
+Every `run-one` and `run-matrix` is fresh by default. Resume requires `--resume <execution-id>` and rejects changed run type, source/config/task/prompt/scaffold hashes, versions, mock profile, or trajectory definition. `--fresh` and `--force-new-execution` are explicit fresh-mode aliases and cannot be combined with resume.
+
 `run-matrix` is intended for small controlled batches first. Use `--max-trajectories` and `--versions` before increasing matrix size.
+
+`pnpm proof:mock` is the credential-free CI gate. It covers parser fixtures, mock lifecycle and terminal-failure paths, repair, artifact verification, leaderboard exclusion, and strict resume rejection.
