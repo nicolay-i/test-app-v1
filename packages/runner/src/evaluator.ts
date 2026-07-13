@@ -261,6 +261,7 @@ async function runRuntimeSmoke(
     server = spawn("pnpm", ["dev", "--host", "127.0.0.1", "--port", String(port)], {
       cwd: workspacePath,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
       env: {
         ...process.env,
         CI: process.env.CI ?? "true"
@@ -294,9 +295,7 @@ async function runRuntimeSmoke(
       message
     };
   } finally {
-    if (server && !server.killed) {
-      server.kill("SIGTERM");
-    }
+    await stopDevServer(server);
     await writeFile(logPath, log, "utf8");
   }
 }
@@ -333,6 +332,7 @@ async function runPlaywrightCheck(options: {
     server = spawn("pnpm", ["dev", "--host", "127.0.0.1", "--port", String(port)], {
       cwd: options.workspacePath,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
       env: {
         ...process.env,
         CI: process.env.CI ?? "true"
@@ -396,12 +396,27 @@ async function runPlaywrightCheck(options: {
       message: error instanceof Error ? error.message : String(error)
     };
   } finally {
-    if (server && !server.killed) {
-      server.kill("SIGTERM");
-    }
+    await stopDevServer(server);
     await rm(workspaceTestDir, { recursive: true, force: true });
     await writeFile(serverLogPath, serverLog, "utf8");
   }
+}
+
+async function stopDevServer(server: ChildProcess | undefined): Promise<void> {
+  if (!server?.pid || server.exitCode !== null) return;
+  try {
+    // pnpm starts Vite as a child; a detached group lets cleanup stop both.
+    process.kill(-server.pid, "SIGTERM");
+  } catch {
+    server.kill("SIGTERM");
+  }
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, 5_000);
+    server.once("close", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
 }
 
 async function copyTestsIntoWorkspace(
