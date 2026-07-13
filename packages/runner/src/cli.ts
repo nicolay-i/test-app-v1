@@ -1531,6 +1531,7 @@ async function negotiateOneCommand(args: CliArgs): Promise<void> {
     opencodeFormat: config.opencode.format,
     autoApprove: config.opencode.autoApprove,
     timeoutMs: config.opencode.timeoutMs,
+    maxAttempts: config.opencode.maxAttempts,
     currentAppContext: await negotiationWorkspaceContext({ taskDir, workspacePath: preflightWorkspace.workspacePath, scenario })
   });
   const preflightDiffPath = path.join(artifactsPath, "preflight.git.diff");

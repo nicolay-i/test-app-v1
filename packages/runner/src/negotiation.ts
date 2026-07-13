@@ -62,6 +62,7 @@ export async function runNegotiationPreflight(options: {
   opencodeFormat: "json" | "default";
   autoApprove: boolean;
   timeoutMs: number;
+  maxAttempts: number;
   currentAppContext?: string;
 }): Promise<{ decision: AgentDecision; score: NegotiationScore }> {
   await ensureDir(options.artifactsPath);
@@ -80,7 +81,8 @@ export async function runNegotiationPreflight(options: {
           workspacePath: options.workspacePath,
           opencodeFormat: options.opencodeFormat,
           autoApprove: options.autoApprove,
-          timeoutMs: options.timeoutMs
+          timeoutMs: options.timeoutMs,
+          maxAttempts: options.maxAttempts
         });
   const score = scoreNegotiationDecision(options.scenario, decision);
   const oracleAnswerSent = decision.decision === "clarify";
@@ -182,6 +184,7 @@ async function runRealDecision(options: {
   opencodeFormat: "json" | "default";
   autoApprove: boolean;
   timeoutMs: number;
+  maxAttempts: number;
 }): Promise<AgentDecision> {
   const result = await runOpenCode({
     model: options.providerModel,
@@ -192,7 +195,8 @@ async function runRealDecision(options: {
     artifactsPath: options.artifactsPath,
     format: options.opencodeFormat,
     autoApprove: options.autoApprove,
-    timeoutMs: options.timeoutMs
+    timeoutMs: options.timeoutMs,
+    maxAttempts: options.maxAttempts
   });
   if (!result.ok) {
     return unknownDecision(`OpenCode failed with exit code ${result.exitCode}`);
