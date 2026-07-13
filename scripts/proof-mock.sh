@@ -12,10 +12,9 @@ run_and_verify() {
   shift
   local output execution
   output=$("${base[@]}" --run "$run" "$@")
-  printf '%s\n' "$output"
   execution=$(extract_execution "$output")
   test -n "$execution"
-  pnpm bench verify-run --execution "$execution"
+  pnpm bench verify-run --execution "$execution" >/dev/null
   printf '%s\n' "$execution"
 }
 
@@ -28,10 +27,9 @@ expect_failure_and_verify() {
     echo "expected benchmark failure did not occur" >&2
     exit 1
   fi
-  printf '%s\n' "$output"
   execution=$(extract_execution "$output")
   test -n "$execution"
-  pnpm bench verify-run --execution "$execution"
+  pnpm bench verify-run --execution "$execution" >/dev/null
   printf '%s\n' "$execution"
 }
 
@@ -62,9 +60,20 @@ if ! rg -q '"streamStatus": "partial"' "runs/ape_mvp_001/executions/${malformed_
   exit 1
 fi
 
-pnpm bench aggregate --execution "$happy_execution" | tee /dev/stderr
+pnpm bench aggregate --execution "$happy_execution" >/dev/null
 if ! rg -q 'No eligible real runs yet' "runs/ape_mvp_001/executions/${happy_execution}/leaderboard.md"; then
   echo "mock trajectory appeared in a leaderboard" >&2
+  exit 1
+fi
+
+repair_artifacts=$(find "runs/ape_mvp_001/executions/${repair_execution}/artifacts" -path '*/v2/repair-summaries.json' -print -quit)
+if [[ -z "$repair_artifacts" ]] || ! rg -q '"attempt": 2' "$repair_artifacts"; then
+  echo "repair success did not require a second repair attempt" >&2
+  exit 1
+fi
+repair_failure_artifacts=$(find "runs/ape_mvp_001/executions/${repair_failure_execution}/artifacts" -path '*/v2/repair-summaries.json' -print -quit)
+if [[ -z "$repair_failure_artifacts" ]] || ! rg -q '"attempt": 2' "$repair_failure_artifacts"; then
+  echo "repair failure did not stop at the configured repair limit" >&2
   exit 1
 fi
 

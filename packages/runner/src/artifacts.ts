@@ -502,6 +502,10 @@ export async function writeRepairSummary(
   const rendered = JSON.stringify(summary, null, 2);
   await writeFile(path.join(versionArtifactsPath, "repair-summary.json"), rendered, "utf8");
   await writeFile(path.join(repairArtifactsPath, "repair-summary.json"), rendered, "utf8");
+  const summariesPath = path.join(versionArtifactsPath, "repair-summaries.json");
+  const existing = await readFile(summariesPath, "utf8").then((raw) => JSON.parse(raw) as RepairSummary[]).catch(() => []);
+  const summaries = [...existing.filter((item) => item.attempt !== summary.attempt), summary].sort((left, right) => left.attempt - right.attempt);
+  await writeFile(summariesPath, JSON.stringify(summaries, null, 2), "utf8");
 }
 
 function classifyFailure(evaluation: EvaluationResult, failedPhase: string | null): FailureClassification {

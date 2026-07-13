@@ -36,6 +36,6 @@ prompts:
 
 runsPerCell: 2
 maxVersions: 5
-maxRepairAttempts: 1
+maxRepairAttempts: 2
 concurrency: 2
 randomizeOrder: true

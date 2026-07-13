@@ -484,7 +484,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       repairAttempts: v0Repair?.attempts ?? 0,
       repairSuccess: v0Repair?.success ?? false,
       generationUsage: opencode.parsed.usage,
-      repairUsage: v0Repair ? [v0Repair.usage] : []
+      repairUsage: v0Repair?.usage ?? []
     })
   );
   metadata = {
@@ -671,7 +671,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         repairAttempts: editRepair?.attempts ?? 0,
         repairSuccess: editRepair?.success ?? false,
         generationUsage: editOpenCode.parsed.usage,
-        repairUsage: editRepair ? [editRepair.usage] : []
+        repairUsage: editRepair?.usage ?? []
       })
     );
     editMetadata = {
@@ -800,7 +800,7 @@ type RepairResult = {
   evaluation: EvaluationResult;
   failureSummary: ReturnType<typeof buildFailureSummary>;
   score: VersionScore;
-  usage: AgentUsage;
+  usage: AgentUsage[];
 };
 
 async function maybeRepairVersion(options: {
@@ -822,36 +822,42 @@ async function maybeRepairVersion(options: {
     return null;
   }
 
-  const repairArtifactsPath = path.join(options.artifactsPath, "repair-1");
-  const repairPrompt = await compileRepairPrompt({
-    rootDir: options.rootDir,
-    trajectory: options.trajectory,
-    versionId: options.versionId,
-    artifactsPath: repairArtifactsPath,
-    failedVersionId: options.versionId,
-    failedChecks: options.failureSummary.failed_checks,
-    failureMessages: options.failureSummary.messages,
-    artifactPaths: options.failureSummary.artifact_paths
-  });
-  const repairOpenCode = options.useMockOpenCode
-    ? await runMockOpenCode(options.workspacePath, repairArtifactsPath, options.evolutionStepIndex, options.mockProfile, true)
-    : await runOpenCode({
-        model: options.trajectory.providerModel,
-        cwd: options.workspacePath,
-        prompt: repairPrompt.prompt,
-        promptPath: repairPrompt.promptPath,
-        title: `${options.trajectory.trajectoryId}:${options.versionId}:repair-1`,
-        artifactsPath: repairArtifactsPath,
-        format: options.config.opencode.format,
-        autoApprove: options.config.opencode.autoApprove,
-        timeoutMs: options.config.opencode.timeoutMs,
-        maxAttempts: options.config.opencode.maxAttempts
-      });
+  let previousFailureSummary = options.failureSummary;
+  let totalDurationMs = 0;
+  const usages: AgentUsage[] = [];
+  let lastResult: Omit<RepairResult, "attempts" | "success" | "durationMs" | "usage"> | null = null;
 
-  await captureGitDiff(options.workspacePath, path.join(repairArtifactsPath, "git.diff"));
+  for (let attempt = 1; attempt <= options.maxRepairAttempts; attempt += 1) {
+    const repairArtifactsPath = path.join(options.artifactsPath, `repair-${attempt}`);
+    const repairPrompt = await compileRepairPrompt({
+      rootDir: options.rootDir,
+      trajectory: options.trajectory,
+      versionId: options.versionId,
+      artifactsPath: repairArtifactsPath,
+      failedVersionId: options.versionId,
+      failedChecks: previousFailureSummary.failed_checks,
+      failureMessages: previousFailureSummary.messages,
+      artifactPaths: previousFailureSummary.artifact_paths
+    });
+    const repairOpenCode = options.useMockOpenCode
+      ? await runMockOpenCode(options.workspacePath, repairArtifactsPath, options.evolutionStepIndex, options.mockProfile, attempt)
+      : await runOpenCode({
+          model: options.trajectory.providerModel,
+          cwd: options.workspacePath,
+          prompt: repairPrompt.prompt,
+          promptPath: repairPrompt.promptPath,
+          title: `${options.trajectory.trajectoryId}:${options.versionId}:repair-${attempt}`,
+          artifactsPath: repairArtifactsPath,
+          format: options.config.opencode.format,
+          autoApprove: options.config.opencode.autoApprove,
+          timeoutMs: options.config.opencode.timeoutMs,
+          maxAttempts: options.config.opencode.maxAttempts
+        });
+    totalDurationMs += repairOpenCode.durationMs;
+    usages.push(repairOpenCode.parsed.usage);
+    await captureGitDiff(options.workspacePath, path.join(repairArtifactsPath, "git.diff"));
 
-  if (!repairOpenCode.ok) {
-    const failedEvaluation = await evaluateWorkspace({
+    const evaluation = await evaluateWorkspace({
       workspacePath: options.workspacePath,
       taskId: options.trajectory.taskId,
       versionId: options.versionId,
@@ -859,66 +865,31 @@ async function maybeRepairVersion(options: {
       evolutionStepIndex: options.evolutionStepIndex,
       skipInstall: options.skipInstall
     });
-    const failedSummary = buildFailureSummary(failedEvaluation);
-    await writeFailureSummary(repairArtifactsPath, failedSummary);
-    const failedScore = await scoreV0(failedEvaluation, repairArtifactsPath, options.runType);
+    const failureSummary = buildFailureSummary(evaluation);
+    await writeFailureSummary(repairArtifactsPath, failureSummary);
+    const score = await scoreV0(evaluation, repairArtifactsPath, options.runType);
+    await commitWorkspaceVersion(options.workspacePath, `${options.versionId}-repair-${attempt}`, repairArtifactsPath);
+    const success = repairOpenCode.ok && evaluation.status === "passed";
     await writeRepairSummary(options.artifactsPath, repairArtifactsPath, {
       version_id: options.versionId,
-      attempt: 1,
-      status: "failed",
-      repair_success: false,
-      failed_checks_before_repair: options.failureSummary.failed_checks,
-      failed_checks_after_repair: failedSummary.failed_checks,
+      attempt,
+      status: success ? "passed" : "failed",
+      repair_success: success,
+      failed_checks_before_repair: previousFailureSummary.failed_checks,
+      failed_checks_after_repair: failureSummary.failed_checks,
       artifacts_path: repairArtifactsPath,
       prompt_path: repairPrompt.promptPath,
       usage: repairOpenCode.parsed.usage
     });
-    return {
-      attempts: 1,
-      success: false,
-      durationMs: repairOpenCode.durationMs,
-      artifactsPath: repairArtifactsPath,
-      evaluation: failedEvaluation,
-      failureSummary: failedSummary,
-      score: failedScore,
-      usage: repairOpenCode.parsed.usage
-    };
+    lastResult = { artifactsPath: repairArtifactsPath, evaluation, failureSummary, score };
+    if (success) {
+      return { attempts: attempt, success: true, durationMs: totalDurationMs, usage: usages, ...lastResult };
+    }
+    previousFailureSummary = failureSummary;
   }
 
-  const evaluation = await evaluateWorkspace({
-    workspacePath: options.workspacePath,
-    taskId: options.trajectory.taskId,
-    versionId: options.versionId,
-    artifactsPath: repairArtifactsPath,
-    evolutionStepIndex: options.evolutionStepIndex,
-    skipInstall: options.skipInstall
-  });
-  const failureSummary = buildFailureSummary(evaluation);
-  await writeFailureSummary(repairArtifactsPath, failureSummary);
-  const score = await scoreV0(evaluation, repairArtifactsPath, options.runType);
-  await commitWorkspaceVersion(options.workspacePath, `${options.versionId}-repair-1`, repairArtifactsPath);
-  await writeRepairSummary(options.artifactsPath, repairArtifactsPath, {
-    version_id: options.versionId,
-    attempt: 1,
-    status: evaluation.status === "passed" ? "passed" : "failed",
-    repair_success: evaluation.status === "passed",
-    failed_checks_before_repair: options.failureSummary.failed_checks,
-    failed_checks_after_repair: failureSummary.failed_checks,
-    artifacts_path: repairArtifactsPath,
-    prompt_path: repairPrompt.promptPath,
-    usage: repairOpenCode.parsed.usage
-  });
-
-  return {
-    attempts: 1,
-    success: evaluation.status === "passed",
-    durationMs: repairOpenCode.durationMs,
-    artifactsPath: repairArtifactsPath,
-    evaluation,
-    failureSummary,
-    score,
-    usage: repairOpenCode.parsed.usage
-  };
+  if (!lastResult) return null;
+  return { attempts: options.maxRepairAttempts, success: false, durationMs: totalDurationMs, usage: usages, ...lastResult };
 }
 
 function combineVersionUsage(generationUsage: AgentUsage, repairUsage: AgentUsage[]): AgentUsage {
@@ -953,7 +924,7 @@ async function runMockOpenCode(
   artifactsPath: string,
   evolutionStepIndex?: number,
   profile = "happy",
-  repair = false
+  repairAttempt = 0
 ): Promise<OpenCodeRunResult> {
   const startedAt = Date.now();
   const versionId = `v${(evolutionStepIndex ?? -1) + 1}`;
@@ -970,7 +941,7 @@ async function runMockOpenCode(
     if (profile === "intentionally-broken") {
       await applyBrokenFixture(workspacePath);
     }
-    if (profile === "build-fail-v2-repair-success" && evolutionStepIndex === 1 && !repair) {
+    if (profile === "build-fail-v2-repair-success" && evolutionStepIndex === 1 && repairAttempt < 2) {
       await writeFile(path.join(workspacePath, "src", "main.tsx"), "this is intentionally invalid TypeScript\n", "utf8");
     }
     if (profile === "e2e-fail-v2-repair-fail" && evolutionStepIndex === 1) {

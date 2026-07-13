@@ -48,7 +48,9 @@ export function parseOpenCodeEvents(stream: string): ParsedOpenCodeResult {
   let parsedEvents = 0;
   let sessionId: string | null = null;
   let finishStatus: string | null = null;
-  let usage = unavailableUsage();
+  let fallbackUsage = unavailableUsage();
+  const stepUsage = emptyStepUsage();
+  const seenStepPartIds = new Set<string>();
 
   for (const line of stream.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -74,15 +76,20 @@ export function parseOpenCodeEvents(stream: string): ParsedOpenCodeResult {
     if (text) texts.push(text);
     const toolError = findToolError(event, type);
     if (toolError) toolErrors.push(toolError);
+    const step = findStepUsage(event, type);
+    if (step && !seenStepPartIds.has(step.partId)) {
+      seenStepPartIds.add(step.partId);
+      addStepUsage(stepUsage, step);
+    }
     const eventUsage = findUsage(event);
-    if (eventUsage) usage = mergeUsage(usage, eventUsage);
+    if (eventUsage) fallbackUsage = mergeUsage(fallbackUsage, eventUsage);
   }
 
   return {
     sessionId,
     assistantText: texts.join(""),
     finishStatus,
-    usage,
+    usage: stepUsage.count > 0 ? finalizeStepUsage(stepUsage) : fallbackUsage,
     toolErrors,
     malformedLines,
     unknownEventTypes: [...unknown].sort(),
@@ -90,8 +97,90 @@ export function parseOpenCodeEvents(stream: string): ParsedOpenCodeResult {
   };
 }
 
+type StepUsage = {
+  count: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reportedCost: number | null;
+};
+
+type ParsedStepUsage = Omit<StepUsage, "count" | "reportedCost"> & { partId: string; reportedCost: number | null };
+
+function emptyStepUsage(): StepUsage {
+  return {
+    count: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reportedCost: null
+  };
+}
+
+function findStepUsage(event: Record<string, unknown>, type: string): ParsedStepUsage | null {
+  if (type !== "step_finish") return null;
+  const part = recordAt(event, "part");
+  if (!part) return null;
+  const tokens = recordAt(part, "tokens");
+  const partId = typeof part.id === "string" ? part.id : null;
+  if (!tokens || !partId) return null;
+  const inputTokens = numberAt(tokens, "input");
+  const outputTokens = numberAt(tokens, "output");
+  const reasoningTokens = numberAt(tokens, "reasoning") ?? 0;
+  const cache = recordAt(tokens, "cache");
+  const cacheReadTokens = cache ? numberAt(cache, "read") ?? 0 : 0;
+  const cacheWriteTokens = cache ? numberAt(cache, "write") ?? 0 : 0;
+  if (inputTokens === null || outputTokens === null) return null;
+  return {
+    partId,
+    inputTokens,
+    outputTokens,
+    reasoningTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reportedCost: numberAt(part, "cost")
+  };
+}
+
+function addStepUsage(total: StepUsage, step: ParsedStepUsage): void {
+  total.count += 1;
+  total.inputTokens += step.inputTokens;
+  total.outputTokens += step.outputTokens;
+  total.reasoningTokens += step.reasoningTokens;
+  total.cacheReadTokens += step.cacheReadTokens;
+  total.cacheWriteTokens += step.cacheWriteTokens;
+  if (step.reportedCost !== null) total.reportedCost = (total.reportedCost ?? 0) + step.reportedCost;
+}
+
+function finalizeStepUsage(usage: StepUsage): AgentUsage {
+  return {
+    status: "complete",
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    reasoningTokens: usage.reasoningTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    totalTokens: usage.inputTokens + usage.outputTokens + usage.reasoningTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
+    reportedCost: usage.reportedCost,
+    currency: null,
+    source: "events"
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordAt(value: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  return isRecord(value[key]) ? value[key] : null;
+}
+
+function numberAt(value: Record<string, unknown>, key: string): number | null {
+  return typeof value[key] === "number" ? value[key] : null;
 }
 
 function stringAt(value: Record<string, unknown>, key: string): string | null {
