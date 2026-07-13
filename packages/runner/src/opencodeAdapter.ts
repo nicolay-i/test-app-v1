@@ -15,6 +15,19 @@ export type OpenCodeRunRequest = {
   autoApprove?: boolean;
   timeoutMs?: number;
   maxAttempts?: number;
+  purpose?: "preflight" | "implementation" | "clarification" | "repair";
+};
+
+export type OpenCodeAttempt = {
+  attempt: number;
+  purpose: "preflight" | "implementation" | "clarification" | "repair" | "continuation";
+  ok: boolean;
+  durationMs: number;
+  artifactsPath: string;
+  sessionId: string | null;
+  continuedSessionId: string | null;
+  continuationFallback: boolean;
+  failureClassification: "none" | "technical_interruption";
 };
 
 export type OpenCodeRunResult = {
@@ -27,7 +40,7 @@ export type OpenCodeRunResult = {
   resultPath: string;
   assistantResponsePath: string;
   parsed: ParsedOpenCodeResult;
-  attempts: Array<{ attempt: number; ok: boolean; durationMs: number; artifactsPath: string }>;
+  attempts: OpenCodeAttempt[];
   error?: string;
 };
 
@@ -35,10 +48,35 @@ export async function runOpenCode(request: OpenCodeRunRequest): Promise<OpenCode
   const maxAttempts = Math.max(1, request.maxAttempts ?? 2);
   const attempts: OpenCodeRunResult["attempts"] = [];
   let result: Omit<OpenCodeRunResult, "attempts"> | undefined;
+  let previousSessionId: string | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const artifactsPath = path.join(request.artifactsPath, "opencode-attempts", `attempt-${attempt}`);
-    result = await runSingleOpenCode({ ...request, artifactsPath });
-    attempts.push({ attempt, ok: result.ok, durationMs: result.durationMs, artifactsPath });
+    const continuation = attempt > 1;
+    const continuedSessionId = continuation ? previousSessionId : null;
+    const { promptPath: _promptPath, ...requestWithoutPromptPath } = request;
+    result = await runSingleOpenCode({
+      ...(continuation ? requestWithoutPromptPath : request),
+      artifactsPath,
+      ...(continuation
+        ? {
+            prompt: "Continue the current task from where it stopped.",
+            sessionId: continuedSessionId,
+            continuation
+          }
+        : {})
+    });
+    attempts.push({
+      attempt,
+      purpose: continuation ? "continuation" : request.purpose ?? "implementation",
+      ok: result.ok,
+      durationMs: result.durationMs,
+      artifactsPath,
+      sessionId: result.parsed.sessionId,
+      continuedSessionId,
+      continuationFallback: continuation && continuedSessionId === null,
+      failureClassification: result.ok ? "none" : "technical_interruption"
+    });
+    previousSessionId = result.parsed.sessionId ?? previousSessionId;
     if (result.ok || attempt === maxAttempts) break;
   }
   if (!result) throw new Error("OpenCode attempt was not started");
@@ -62,7 +100,7 @@ export async function runOpenCode(request: OpenCodeRunRequest): Promise<OpenCode
   };
 }
 
-async function runSingleOpenCode(request: OpenCodeRunRequest): Promise<Omit<OpenCodeRunResult, "attempts">> {
+async function runSingleOpenCode(request: OpenCodeRunRequest & { sessionId?: string | null; continuation?: boolean }): Promise<Omit<OpenCodeRunResult, "attempts">> {
   await ensureDir(request.artifactsPath);
 
   const stdoutPath = path.join(request.artifactsPath, "opencode.stdout.log");
@@ -81,11 +119,15 @@ async function runSingleOpenCode(request: OpenCodeRunRequest): Promise<Omit<Open
     request.title
   ];
 
+  if (request.sessionId) {
+    args.push("--session", request.sessionId);
+  }
+
   if (request.autoApprove ?? true) {
     args.push("--auto");
   }
 
-  args.push("Read the attached benchmark prompt and implement the requested app.");
+  args.push(request.continuation ? request.prompt : "Read the attached benchmark prompt and implement the requested app.");
 
   if (request.promptPath) {
     args.push("--file", request.promptPath);

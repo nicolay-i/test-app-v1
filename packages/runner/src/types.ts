@@ -13,6 +13,7 @@ export type MatrixConfig = {
     attachUrl: string | null;
     timeoutMs: number;
     maxAttempts: number;
+    maxContinuations: number;
   };
   scaffold: {
     id: string;

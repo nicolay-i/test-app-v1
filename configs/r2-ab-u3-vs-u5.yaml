@@ -8,6 +8,7 @@ opencode:
   attachUrl: null
   timeoutMs: 900000
   maxAttempts: 2
+  maxContinuations: 1
 
 scaffold:
   id: vite-react-ts

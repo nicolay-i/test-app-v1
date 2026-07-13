@@ -380,7 +380,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         format: config.opencode.format,
         autoApprove: config.opencode.autoApprove,
         timeoutMs: config.opencode.timeoutMs,
-        maxAttempts: config.opencode.maxAttempts
+        maxAttempts: Math.min(config.opencode.maxAttempts, config.opencode.maxContinuations + 1)
       });
 
   await captureGitDiff(workspace.workspacePath, path.join(artifactsPath, "git.diff"));
@@ -577,7 +577,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
           format: config.opencode.format,
           autoApprove: config.opencode.autoApprove,
           timeoutMs: config.opencode.timeoutMs,
-          maxAttempts: config.opencode.maxAttempts
+          maxAttempts: Math.min(config.opencode.maxAttempts, config.opencode.maxContinuations + 1)
         });
 
     await captureGitDiff(workspace.workspacePath, path.join(editArtifactsPath, "git.diff"));
@@ -851,7 +851,8 @@ async function maybeRepairVersion(options: {
           format: options.config.opencode.format,
           autoApprove: options.config.opencode.autoApprove,
           timeoutMs: options.config.opencode.timeoutMs,
-          maxAttempts: options.config.opencode.maxAttempts
+          maxAttempts: Math.min(options.config.opencode.maxAttempts, options.config.opencode.maxContinuations + 1),
+          purpose: "repair"
         });
     totalDurationMs += repairOpenCode.durationMs;
     usages.push(repairOpenCode.parsed.usage);
@@ -980,7 +981,17 @@ async function runMockOpenCode(
     resultPath,
     assistantResponsePath,
     parsed,
-    attempts: [{ attempt: 1, ok: !fail, durationMs: Date.now() - startedAt, artifactsPath }],
+    attempts: [{
+      attempt: 1,
+      purpose: "implementation",
+      ok: !fail,
+      durationMs: Date.now() - startedAt,
+      artifactsPath,
+      sessionId: "mock",
+      continuedSessionId: null,
+      continuationFallback: false,
+      failureClassification: fail ? "technical_interruption" : "none"
+    }],
     ...(fail ? { error: profile === "timeout-v0" ? `Timed out after mock profile ${profile}` : `mock profile ${profile} failed ${versionId}` } : {})
   };
 }
@@ -1513,6 +1524,7 @@ async function negotiateOneCommand(args: CliArgs): Promise<void> {
     autoApprove: config.opencode.autoApprove,
     timeoutMs: config.opencode.timeoutMs,
     maxAttempts: config.opencode.maxAttempts,
+    maxContinuations: config.opencode.maxContinuations,
     currentAppContext: await negotiationWorkspaceContext({ taskDir, workspacePath: preflightWorkspace.workspacePath, scenario })
   });
   const preflightDiffPath = path.join(artifactsPath, "preflight.git.diff");
@@ -1669,7 +1681,7 @@ async function runFullNegotiationImplementation(options: {
           format: options.config.opencode.format,
           autoApprove: options.config.opencode.autoApprove,
           timeoutMs: options.config.opencode.timeoutMs,
-          maxAttempts: options.config.opencode.maxAttempts
+          maxAttempts: Math.min(options.config.opencode.maxAttempts, options.config.opencode.maxContinuations + 1)
         });
   await captureGitDiff(options.workspacePath, path.join(options.artifactsPath, "git.diff"));
 

@@ -63,6 +63,7 @@ export async function runNegotiationPreflight(options: {
   autoApprove: boolean;
   timeoutMs: number;
   maxAttempts: number;
+  maxContinuations: number;
   currentAppContext?: string;
 }): Promise<{ decision: AgentDecision; score: NegotiationScore }> {
   await ensureDir(options.artifactsPath);
@@ -82,7 +83,8 @@ export async function runNegotiationPreflight(options: {
           opencodeFormat: options.opencodeFormat,
           autoApprove: options.autoApprove,
           timeoutMs: options.timeoutMs,
-          maxAttempts: options.maxAttempts
+          maxAttempts: options.maxAttempts,
+          maxContinuations: options.maxContinuations
         });
   const score = scoreNegotiationDecision(options.scenario, decision);
   const oracleAnswerSent = decision.decision === "clarify";
@@ -185,6 +187,7 @@ async function runRealDecision(options: {
   autoApprove: boolean;
   timeoutMs: number;
   maxAttempts: number;
+  maxContinuations: number;
 }): Promise<AgentDecision> {
   const result = await runOpenCode({
     model: options.providerModel,
@@ -196,7 +199,8 @@ async function runRealDecision(options: {
     format: options.opencodeFormat,
     autoApprove: options.autoApprove,
     timeoutMs: options.timeoutMs,
-    maxAttempts: options.maxAttempts
+    maxAttempts: Math.min(options.maxAttempts, options.maxContinuations + 1),
+    purpose: "preflight"
   });
   if (!result.ok) {
     return unknownDecision(`OpenCode failed with exit code ${result.exitCode}`);
