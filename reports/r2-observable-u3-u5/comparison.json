@@ -1,0 +1,658 @@
+{
+  "schema_version": "0.1.0",
+  "experiment_id": "r2-observable-u3-u5",
+  "method": "First successful real v0-to-v2 trajectory per prompt arm; no statistical superiority claim.",
+  "compatible_baseline": true,
+  "tested_runner_commit": "e495166c9dfc2508b88cfc3d0e10152dfaf696f4",
+  "selected_cases": {
+    "U3-semantic-ui": {
+      "execution_id": "20260713T054622Z-real-08c293",
+      "trajectory_id": "todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r5",
+      "versions": [
+        {
+          "version_id": "v0",
+          "status": "passed",
+          "score": 1,
+          "failure_classification": "none",
+          "failed_phase": null,
+          "evaluation_completed": true,
+          "failed_checks": [],
+          "repair_attempts": 0,
+          "repair_success": false,
+          "loc_total": 374,
+          "largest_file_loc": 203,
+          "diff": {
+            "files_touched": 3,
+            "lines_added": 194,
+            "lines_deleted": 19,
+            "rewrite_ratio": 0.0892018779342723,
+            "package_json_changed": false
+          },
+          "generation_usage": {
+            "status": "complete",
+            "inputTokens": 16829,
+            "outputTokens": 5951,
+            "reasoningTokens": 1788,
+            "cacheReadTokens": 204544,
+            "cacheWriteTokens": 0,
+            "totalTokens": 229112,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "preflight_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 14078,
+              "outputTokens": 2079,
+              "reasoningTokens": 565,
+              "cacheReadTokens": 107392,
+              "cacheWriteTokens": 0,
+              "totalTokens": 124114,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "clarification_usage": [],
+          "repair_usage": [],
+          "version_total_usage": {
+            "status": "complete",
+            "inputTokens": 30907,
+            "outputTokens": 8030,
+            "reasoningTokens": 2353,
+            "cacheReadTokens": 311936,
+            "cacheWriteTokens": 0,
+            "totalTokens": 353226,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "feedback_events": [
+            {
+              "kind": "preflight",
+              "automatic": true,
+              "source": "none",
+              "round": null,
+              "question_count": 0,
+              "answer_words": 0,
+              "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T054622Z-real-08c293/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r5/v0/preflight"
+            }
+          ],
+          "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T054622Z-real-08c293/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r5/v0"
+        },
+        {
+          "version_id": "v1",
+          "status": "passed",
+          "score": 1,
+          "failure_classification": "none",
+          "failed_phase": null,
+          "evaluation_completed": true,
+          "failed_checks": [],
+          "repair_attempts": 1,
+          "repair_success": true,
+          "loc_total": 466,
+          "largest_file_loc": 245,
+          "diff": {
+            "files_touched": 2,
+            "lines_added": 124,
+            "lines_deleted": 21,
+            "rewrite_ratio": 0.14482758620689656,
+            "package_json_changed": false
+          },
+          "generation_usage": {
+            "status": "complete",
+            "inputTokens": 24574,
+            "outputTokens": 4323,
+            "reasoningTokens": 4723,
+            "cacheReadTokens": 244608,
+            "cacheWriteTokens": 0,
+            "totalTokens": 278228,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "preflight_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 17562,
+              "outputTokens": 1965,
+              "reasoningTokens": 557,
+              "cacheReadTokens": 59776,
+              "cacheWriteTokens": 0,
+              "totalTokens": 79860,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "clarification_usage": [],
+          "repair_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 42117,
+              "outputTokens": 4961,
+              "reasoningTokens": 2006,
+              "cacheReadTokens": 598784,
+              "cacheWriteTokens": 0,
+              "totalTokens": 647868,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "version_total_usage": {
+            "status": "complete",
+            "inputTokens": 84253,
+            "outputTokens": 11249,
+            "reasoningTokens": 7286,
+            "cacheReadTokens": 903168,
+            "cacheWriteTokens": 0,
+            "totalTokens": 1005956,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "feedback_events": [
+            {
+              "kind": "preflight",
+              "automatic": true,
+              "source": "none",
+              "round": null,
+              "question_count": 0,
+              "answer_words": 0,
+              "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T054622Z-real-08c293/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r5/v1/preflight"
+            }
+          ],
+          "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T054622Z-real-08c293/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r5/v1/repair-1"
+        },
+        {
+          "version_id": "v2",
+          "status": "passed",
+          "score": 1,
+          "failure_classification": "none",
+          "failed_phase": null,
+          "evaluation_completed": true,
+          "failed_checks": [],
+          "repair_attempts": 0,
+          "repair_success": false,
+          "loc_total": 493,
+          "largest_file_loc": 257,
+          "diff": {
+            "files_touched": 2,
+            "lines_added": 30,
+            "lines_deleted": 1,
+            "rewrite_ratio": 0.03225806451612903,
+            "package_json_changed": false
+          },
+          "generation_usage": {
+            "status": "complete",
+            "inputTokens": 17556,
+            "outputTokens": 2778,
+            "reasoningTokens": 1184,
+            "cacheReadTokens": 197248,
+            "cacheWriteTokens": 0,
+            "totalTokens": 218766,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "preflight_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 14515,
+              "outputTokens": 545,
+              "reasoningTokens": 726,
+              "cacheReadTokens": 28416,
+              "cacheWriteTokens": 0,
+              "totalTokens": 44202,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "clarification_usage": [],
+          "repair_usage": [],
+          "version_total_usage": {
+            "status": "complete",
+            "inputTokens": 32071,
+            "outputTokens": 3323,
+            "reasoningTokens": 1910,
+            "cacheReadTokens": 225664,
+            "cacheWriteTokens": 0,
+            "totalTokens": 262968,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "feedback_events": [
+            {
+              "kind": "preflight",
+              "automatic": true,
+              "source": "none",
+              "round": null,
+              "question_count": 0,
+              "answer_words": 0,
+              "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T054622Z-real-08c293/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r5/v2/preflight"
+            }
+          ],
+          "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T054622Z-real-08c293/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r5/v2"
+        }
+      ],
+      "lifecycle_usage": {
+        "status": "complete",
+        "inputTokens": 147231,
+        "outputTokens": 22602,
+        "reasoningTokens": 11549,
+        "cacheReadTokens": 1440768,
+        "cacheWriteTokens": 0,
+        "totalTokens": 1622150,
+        "reportedCost": 0,
+        "currency": null,
+        "source": "events"
+      },
+      "required_supervision": {
+        "versions_requiring_clarification": 0,
+        "clarification_rounds": 0,
+        "questions_total": 0,
+        "answer_words": 0,
+        "clarification_limit_reached": 0
+      },
+      "actual_human_activity": {
+        "human_answers_total": 0,
+        "human_answer_words": 0,
+        "human_prompt_corrections": 0,
+        "human_acceptance_corrections": 0,
+        "human_code_edits": 0,
+        "manual_files_changed": 0,
+        "manual_lines_added": 0,
+        "manual_lines_deleted": 0
+      }
+    },
+    "U5-maintainable": {
+      "execution_id": "20260713T055703Z-real-e92cc1",
+      "trajectory_id": "todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U5-maintainable__E2-smallest-maintainable-change__r3",
+      "versions": [
+        {
+          "version_id": "v0",
+          "status": "passed",
+          "score": 1,
+          "failure_classification": "none",
+          "failed_phase": null,
+          "evaluation_completed": true,
+          "failed_checks": [],
+          "repair_attempts": 1,
+          "repair_success": true,
+          "loc_total": 225,
+          "largest_file_loc": 116,
+          "diff": {
+            "files_touched": 3,
+            "lines_added": 134,
+            "lines_deleted": 21,
+            "rewrite_ratio": 0.13548387096774195,
+            "package_json_changed": false
+          },
+          "generation_usage": {
+            "status": "complete",
+            "inputTokens": 16816,
+            "outputTokens": 4938,
+            "reasoningTokens": 1992,
+            "cacheReadTokens": 198272,
+            "cacheWriteTokens": 0,
+            "totalTokens": 222018,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "preflight_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 13457,
+              "outputTokens": 1866,
+              "reasoningTokens": 500,
+              "cacheReadTokens": 71296,
+              "cacheWriteTokens": 0,
+              "totalTokens": 87119,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "clarification_usage": [],
+          "repair_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 32850,
+              "outputTokens": 5545,
+              "reasoningTokens": 3818,
+              "cacheReadTokens": 371456,
+              "cacheWriteTokens": 0,
+              "totalTokens": 413669,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "version_total_usage": {
+            "status": "complete",
+            "inputTokens": 63123,
+            "outputTokens": 12349,
+            "reasoningTokens": 6310,
+            "cacheReadTokens": 641024,
+            "cacheWriteTokens": 0,
+            "totalTokens": 722806,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "feedback_events": [
+            {
+              "kind": "preflight",
+              "automatic": true,
+              "source": "none",
+              "round": null,
+              "question_count": 0,
+              "answer_words": 0,
+              "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T055703Z-real-e92cc1/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U5-maintainable__E2-smallest-maintainable-change__r3/v0/preflight"
+            }
+          ],
+          "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T055703Z-real-e92cc1/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U5-maintainable__E2-smallest-maintainable-change__r3/v0/repair-1"
+        },
+        {
+          "version_id": "v1",
+          "status": "passed",
+          "score": 1,
+          "failure_classification": "none",
+          "failed_phase": null,
+          "evaluation_completed": true,
+          "failed_checks": [],
+          "repair_attempts": 2,
+          "repair_success": true,
+          "loc_total": 380,
+          "largest_file_loc": 184,
+          "diff": {
+            "files_touched": 2,
+            "lines_added": 5,
+            "lines_deleted": 1,
+            "rewrite_ratio": 0.16666666666666666,
+            "package_json_changed": false
+          },
+          "generation_usage": {
+            "status": "complete",
+            "inputTokens": 20083,
+            "outputTokens": 5027,
+            "reasoningTokens": 6537,
+            "cacheReadTokens": 248960,
+            "cacheWriteTokens": 0,
+            "totalTokens": 280607,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "preflight_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 8614,
+              "outputTokens": 2862,
+              "reasoningTokens": 1518,
+              "cacheReadTokens": 225280,
+              "cacheWriteTokens": 0,
+              "totalTokens": 238274,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "clarification_usage": [],
+          "repair_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 38351,
+              "outputTokens": 7516,
+              "reasoningTokens": 3433,
+              "cacheReadTokens": 932480,
+              "cacheWriteTokens": 0,
+              "totalTokens": 981780,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            },
+            {
+              "status": "complete",
+              "inputTokens": 31521,
+              "outputTokens": 5041,
+              "reasoningTokens": 12993,
+              "cacheReadTokens": 509440,
+              "cacheWriteTokens": 0,
+              "totalTokens": 558995,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "version_total_usage": {
+            "status": "complete",
+            "inputTokens": 98569,
+            "outputTokens": 20446,
+            "reasoningTokens": 24481,
+            "cacheReadTokens": 1916160,
+            "cacheWriteTokens": 0,
+            "totalTokens": 2059656,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "feedback_events": [
+            {
+              "kind": "preflight",
+              "automatic": true,
+              "source": "none",
+              "round": null,
+              "question_count": 0,
+              "answer_words": 0,
+              "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T055703Z-real-e92cc1/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U5-maintainable__E2-smallest-maintainable-change__r3/v1/preflight"
+            }
+          ],
+          "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T055703Z-real-e92cc1/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U5-maintainable__E2-smallest-maintainable-change__r3/v1/repair-2"
+        },
+        {
+          "version_id": "v2",
+          "status": "passed",
+          "score": 1,
+          "failure_classification": "none",
+          "failed_phase": null,
+          "evaluation_completed": true,
+          "failed_checks": [],
+          "repair_attempts": 0,
+          "repair_success": false,
+          "loc_total": 407,
+          "largest_file_loc": 196,
+          "diff": {
+            "files_touched": 2,
+            "lines_added": 33,
+            "lines_deleted": 4,
+            "rewrite_ratio": 0.10810810810810811,
+            "package_json_changed": false
+          },
+          "generation_usage": {
+            "status": "complete",
+            "inputTokens": 16778,
+            "outputTokens": 2857,
+            "reasoningTokens": 654,
+            "cacheReadTokens": 144896,
+            "cacheWriteTokens": 0,
+            "totalTokens": 165185,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "preflight_usage": [
+            {
+              "status": "complete",
+              "inputTokens": 14602,
+              "outputTokens": 1729,
+              "reasoningTokens": 1063,
+              "cacheReadTokens": 68608,
+              "cacheWriteTokens": 0,
+              "totalTokens": 86002,
+              "reportedCost": 0,
+              "currency": null,
+              "source": "events"
+            }
+          ],
+          "clarification_usage": [],
+          "repair_usage": [],
+          "version_total_usage": {
+            "status": "complete",
+            "inputTokens": 31380,
+            "outputTokens": 4586,
+            "reasoningTokens": 1717,
+            "cacheReadTokens": 213504,
+            "cacheWriteTokens": 0,
+            "totalTokens": 251187,
+            "reportedCost": 0,
+            "currency": null,
+            "source": "events"
+          },
+          "feedback_events": [
+            {
+              "kind": "preflight",
+              "automatic": true,
+              "source": "none",
+              "round": null,
+              "question_count": 0,
+              "answer_words": 0,
+              "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T055703Z-real-e92cc1/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U5-maintainable__E2-smallest-maintainable-change__r3/v2/preflight"
+            }
+          ],
+          "artifacts_path": "/Users/nicolay/Documents/ProjectsPet/BenchV1/runs/ape_r2_ab_u3_v_u5/executions/20260713T055703Z-real-e92cc1/artifacts/todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U5-maintainable__E2-smallest-maintainable-change__r3/v2"
+        }
+      ],
+      "lifecycle_usage": {
+        "status": "complete",
+        "inputTokens": 193072,
+        "outputTokens": 37381,
+        "reasoningTokens": 32508,
+        "cacheReadTokens": 2770688,
+        "cacheWriteTokens": 0,
+        "totalTokens": 3033649,
+        "reportedCost": 0,
+        "currency": null,
+        "source": "events"
+      },
+      "required_supervision": {
+        "versions_requiring_clarification": 0,
+        "clarification_rounds": 0,
+        "questions_total": 0,
+        "answer_words": 0,
+        "clarification_limit_reached": 0
+      },
+      "actual_human_activity": {
+        "human_answers_total": 0,
+        "human_answer_words": 0,
+        "human_prompt_corrections": 0,
+        "human_acceptance_corrections": 0,
+        "human_code_edits": 0,
+        "manual_files_changed": 0,
+        "manual_lines_added": 0,
+        "manual_lines_deleted": 0
+      }
+    }
+  },
+  "attempts": [
+    {
+      "execution_id": "20260713T054622Z-real-08c293",
+      "trajectory_id": "todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U3-semantic-ui__E2-smallest-maintainable-change__r5",
+      "arm": "U3-semantic-ui",
+      "run_type": "real",
+      "status": "completed",
+      "source_commit": "e495166c9dfc2508b88cfc3d0e10152dfaf696f4",
+      "repo_dirty": false,
+      "eligible": true,
+      "first_failed_version": null,
+      "survived_versions": 2,
+      "repair_attempts_total": 1,
+      "lifecycle_usage": {
+        "status": "complete",
+        "inputTokens": 147231,
+        "outputTokens": 22602,
+        "reasoningTokens": 11549,
+        "cacheReadTokens": 1440768,
+        "cacheWriteTokens": 0,
+        "totalTokens": 1622150,
+        "reportedCost": 0,
+        "currency": null,
+        "source": "events"
+      },
+      "required_supervision": {
+        "versions_requiring_clarification": 0,
+        "clarification_rounds": 0,
+        "questions_total": 0,
+        "answer_words": 0,
+        "clarification_limit_reached": 0
+      },
+      "actual_human_activity": {
+        "human_answers_total": 0,
+        "human_answer_words": 0,
+        "human_prompt_corrections": 0,
+        "human_acceptance_corrections": 0,
+        "human_code_edits": 0,
+        "manual_files_changed": 0,
+        "manual_lines_added": 0,
+        "manual_lines_deleted": 0
+      },
+      "failure_classes": [
+        "none",
+        "none",
+        "none"
+      ]
+    },
+    {
+      "execution_id": "20260713T055703Z-real-e92cc1",
+      "trajectory_id": "todomvc__deepseek-v4-flash-free__S2-maintainable-simple__U5-maintainable__E2-smallest-maintainable-change__r3",
+      "arm": "U5-maintainable",
+      "run_type": "real",
+      "status": "completed",
+      "source_commit": "e495166c9dfc2508b88cfc3d0e10152dfaf696f4",
+      "repo_dirty": false,
+      "eligible": true,
+      "first_failed_version": null,
+      "survived_versions": 2,
+      "repair_attempts_total": 3,
+      "lifecycle_usage": {
+        "status": "complete",
+        "inputTokens": 193072,
+        "outputTokens": 37381,
+        "reasoningTokens": 32508,
+        "cacheReadTokens": 2770688,
+        "cacheWriteTokens": 0,
+        "totalTokens": 3033649,
+        "reportedCost": 0,
+        "currency": null,
+        "source": "events"
+      },
+      "required_supervision": {
+        "versions_requiring_clarification": 0,
+        "clarification_rounds": 0,
+        "questions_total": 0,
+        "answer_words": 0,
+        "clarification_limit_reached": 0
+      },
+      "actual_human_activity": {
+        "human_answers_total": 0,
+        "human_answer_words": 0,
+        "human_prompt_corrections": 0,
+        "human_acceptance_corrections": 0,
+        "human_code_edits": 0,
+        "manual_files_changed": 0,
+        "manual_lines_added": 0,
+        "manual_lines_deleted": 0
+      },
+      "failure_classes": [
+        "none",
+        "none",
+        "none"
+      ]
+    }
+  ]
+}

@@ -1572,6 +1572,30 @@ async function reportExperimentCommand(args: CliArgs): Promise<void> {
   }
   const outDir = path.join(rootDir, "reports", experimentId);
   await ensureDir(outDir);
+  type Usage = typeof attempts[number]["summary"]["lifecycle_usage"];
+  const nonCacheTokens = (usage: Usage): number | null => {
+    const values = [usage.inputTokens, usage.outputTokens, usage.reasoningTokens];
+    return values.some((value) => value === null) ? null : values[0]! + values[1]! + values[2]!;
+  };
+  const numberText = (value: number | null): string => value === null ? "unavailable" : String(value);
+  const deltaText = (current: number | null, previous: number | null | undefined): string => current === null || previous === null || previous === undefined ? "n/a" : String(current - previous);
+  const attemptRecord = (item: typeof attempts[number]) => ({
+    execution_id: item.executionId,
+    trajectory_id: item.summary.trajectory_id,
+    arm: item.summary.user_prompt_id,
+    run_type: item.summary.run_type,
+    status: item.manifest.status,
+    source_commit: item.manifest.source_commit,
+    repo_dirty: item.manifest.repo_dirty,
+    eligible: item.manifest.eligible_for_published_results,
+    first_failed_version: item.summary.first_failed_version,
+    survived_versions: item.summary.survived_versions,
+    repair_attempts_total: item.summary.repair_attempts_total,
+    lifecycle_usage: item.summary.lifecycle_usage,
+    required_supervision: item.summary.required_supervision,
+    actual_human_activity: item.summary.actual_human_activity,
+    failure_classes: item.summary.versions.map((version) => version.failure_classification)
+  });
   const comparison = {
     schema_version: "0.1.0",
     experiment_id: experimentId,
@@ -1579,17 +1603,44 @@ async function reportExperimentCommand(args: CliArgs): Promise<void> {
     compatible_baseline: compatible,
     tested_runner_commit: commits.size === 1 ? [...commits][0] : null,
     selected_cases: Object.fromEntries([...selected.entries()].map(([arm, item]) => [arm, { execution_id: item.executionId, trajectory_id: item.summary.trajectory_id, versions: item.summary.versions, lifecycle_usage: item.summary.lifecycle_usage, required_supervision: item.summary.required_supervision, actual_human_activity: item.summary.actual_human_activity }])),
-    attempts: attempts.map((item) => ({ execution_id: item.executionId, trajectory_id: item.summary.trajectory_id, arm: item.summary.user_prompt_id, run_type: item.summary.run_type, status: item.manifest.status, repo_dirty: item.manifest.repo_dirty, eligible: item.manifest.eligible_for_published_results, first_failed_version: item.summary.first_failed_version, survived_versions: item.summary.survived_versions, failure_classes: item.summary.versions.map((version) => version.failure_classification) }))
+    attempts: attempts.map(attemptRecord)
   };
   await writeFile(path.join(outDir, "comparison.json"), JSON.stringify(comparison, null, 2), "utf8");
-  const csvRows = [["execution_id", "trajectory_id", "arm", "run_type", "status", "first_failed_version", "survived_versions", "repair_attempts", "clarification_rounds", "human_answers"]];
-  for (const item of attempts) csvRows.push([item.executionId, item.summary.trajectory_id, item.summary.user_prompt_id, item.summary.run_type, item.manifest.status, item.summary.first_failed_version ?? "", String(item.summary.survived_versions), String(item.summary.repair_attempts_total), String(item.summary.required_supervision.clarification_rounds), String(item.summary.actual_human_activity.human_answers_total)]);
+  const csvRows = [["execution_id", "trajectory_id", "arm", "run_type", "status", "source_commit", "repo_dirty", "eligible", "first_failed_version", "survived_versions", "repair_attempts", "lifecycle_tokens", "non_cache_tokens", "cache_read_tokens", "clarification_rounds", "clarification_questions", "human_answers", "human_answer_words", "human_prompt_corrections", "human_acceptance_corrections", "human_code_edits", "failure_classes"]];
+  for (const item of attempts) {
+    const usage = item.summary.lifecycle_usage;
+    csvRows.push([item.executionId, item.summary.trajectory_id, item.summary.user_prompt_id, item.summary.run_type, item.manifest.status, item.manifest.source_commit ?? "", String(item.manifest.repo_dirty), String(item.manifest.eligible_for_published_results), item.summary.first_failed_version ?? "", String(item.summary.survived_versions), String(item.summary.repair_attempts_total), numberText(usage.totalTokens), numberText(nonCacheTokens(usage)), numberText(usage.cacheReadTokens), String(item.summary.required_supervision.clarification_rounds), String(item.summary.required_supervision.questions_total), String(item.summary.actual_human_activity.human_answers_total), String(item.summary.actual_human_activity.human_answer_words), String(item.summary.actual_human_activity.human_prompt_corrections), String(item.summary.actual_human_activity.human_acceptance_corrections), String(item.summary.actual_human_activity.human_code_edits), item.summary.versions.map((version) => version.failure_classification).join("|")]);
+  }
   await writeFile(path.join(outDir, "attempts.csv"), csvRows.map((row) => row.map((cell) => /[",\n]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell).join(",")).join("\n") + "\n", "utf8");
-  const selectedLines = ["U3-semantic-ui", "U5-maintainable"].map((arm) => {
+  const markdown: string[] = ["# Observable Lifecycle Comparison", "", `Experiment: ${experimentId}`, "", "## Method", "", "First successful real v0-to-v2 case per prompt arm. This report is descriptive and does not claim statistical superiority.", "", "## Baseline", "", `- compatible: ${compatible}`, `- runner commit: ${commits.size === 1 ? [...commits][0] : "incompatible or unavailable"}`, ""];
+  for (const arm of ["U3-semantic-ui", "U5-maintainable"]) {
     const item = selected.get(arm);
-    return item ? `- ${arm}: ${item.summary.trajectory_id}; tokens=${item.summary.lifecycle_tokens ?? "unavailable"}; repairs=${item.summary.repair_attempts_total}; clarifications=${item.summary.required_supervision.clarification_rounds}` : `- ${arm}: no successful real v0->v2 case`;
-  });
-  await writeFile(path.join(outDir, "comparison.md"), ["# Observable Lifecycle Comparison", "", `Experiment: ${experimentId}`, "", "## Method", "", "First successful real v0->v2 case per arm. This report is descriptive and does not claim statistical superiority.", "", "## Baseline", "", `- compatible: ${compatible}`, `- runner commit: ${commits.size === 1 ? [...commits][0] : "incompatible or unavailable"}`, "", "## Selected Cases", "", ...selectedLines, "", "## All Attempts", "", ...attempts.map((item) => `- ${item.summary.user_prompt_id} / ${item.executionId}: ${item.summary.first_failed_version ? `failed at ${item.summary.first_failed_version}` : "passed"}; repairs=${item.summary.repair_attempts_total}; clarification rounds=${item.summary.required_supervision.clarification_rounds}`), ""].join("\n"), "utf8");
+    if (!item) {
+      markdown.push(`## ${arm}`, "", "No successful real v0-to-v2 case was selected.", "");
+      continue;
+    }
+    const summary = item.summary;
+    const lifecycle = summary.lifecycle_usage;
+    const lifecycleNonCache = nonCacheTokens(lifecycle);
+    markdown.push(`## ${arm}`, "", `- execution: ${item.executionId}`, `- trajectory: ${summary.trajectory_id}`, `- lifecycle tokens: ${numberText(lifecycle.totalTokens)} (${numberText(lifecycleNonCache)} non-cache; ${numberText(lifecycle.cacheReadTokens)} cache-read)`, `- repairs: ${summary.repair_attempts_total}`, "", "| Version | Status | Score | Total tokens | Delta tokens | Delta non-cache | Delta cache-read | LOC | Largest file LOC | Diff (+/-/files/rewrite) | Repairs | Feedback |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |");
+    let previousUsage: typeof summary.versions[number]["version_total_usage"] | undefined;
+    for (const version of summary.versions) {
+      const usage = version.version_total_usage;
+      const nonCache = nonCacheTokens(usage);
+      const previousNonCache = previousUsage ? nonCacheTokens(previousUsage) : undefined;
+      const feedback = version.feedback_events.map((event) => `${event.kind}${event.round === null ? "" : `:${event.round}`}`).join(",") || "none";
+      const diff = `${version.diff.lines_added}/${version.diff.lines_deleted}/${version.diff.files_touched}/${version.diff.rewrite_ratio.toFixed(3)}`;
+      markdown.push(`| ${version.version_id} | ${version.status} | ${version.score === null ? "unavailable" : version.score.toFixed(2)} | ${numberText(usage.totalTokens)} | ${previousUsage ? deltaText(usage.totalTokens, previousUsage.totalTokens) : "0"} | ${previousUsage ? deltaText(nonCache, previousNonCache) : "0"} | ${previousUsage ? deltaText(usage.cacheReadTokens, previousUsage.cacheReadTokens) : "0"} | ${version.loc_total} | ${version.largest_file_loc} | ${diff} | ${version.repair_attempts} | ${feedback} |`);
+      previousUsage = usage;
+    }
+    const supervision = summary.required_supervision;
+    const human = summary.actual_human_activity;
+    markdown.push("", "### Supervision", "", `- required clarification: versions=${supervision.versions_requiring_clarification}, rounds=${supervision.clarification_rounds}, questions=${supervision.questions_total}, answer words=${supervision.answer_words}, limits reached=${supervision.clarification_limit_reached}`, `- actual human activity: answers=${human.human_answers_total}, answer words=${human.human_answer_words}, prompt corrections=${human.human_prompt_corrections}, acceptance corrections=${human.human_acceptance_corrections}, code edits=${human.human_code_edits}`, "");
+  }
+  markdown.push("## All Attempts", "", "| Arm | Execution | Status | First failure | Repairs | Lifecycle tokens | Clarification rounds | Human answers | Failure classes |", "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |");
+  for (const item of attempts) markdown.push(`| ${item.summary.user_prompt_id} | ${item.executionId} | ${item.manifest.status} | ${item.summary.first_failed_version ?? "none"} | ${item.summary.repair_attempts_total} | ${numberText(item.summary.lifecycle_usage.totalTokens)} | ${item.summary.required_supervision.clarification_rounds} | ${item.summary.actual_human_activity.human_answers_total} | ${item.summary.versions.map((version) => version.failure_classification).join(",")} |`);
+  markdown.push("");
+  await writeFile(path.join(outDir, "comparison.md"), markdown.join("\n"), "utf8");
   console.log(`comparison: ${path.join(outDir, "comparison.json")}`);
   console.log(`report: ${path.join(outDir, "comparison.md")}`);
   console.log(`attempts: ${path.join(outDir, "attempts.csv")}`);
