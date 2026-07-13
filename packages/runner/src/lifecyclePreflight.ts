@@ -1,6 +1,7 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { ensureDir } from "./fs.js";
+import { copyDirFiltered, ensureDir } from "./fs.js";
 import { loadNegotiationScenario, parseDecision, type AgentDecision, type NegotiationScenario } from "./negotiation.js";
 import { runOpenCode } from "./opencodeAdapter.js";
 import { unavailableAgentUsage, type RunType } from "./artifacts.js";
@@ -50,19 +51,26 @@ export async function runLifecyclePreflight(options: {
     return { decision, usage: unavailableAgentUsage(), artifactsPath, scenarioId: scenario?.id ?? null };
   }
 
-  const result = await runOpenCode({
-    model: options.providerModel,
-    cwd: options.workspacePath,
-    prompt,
-    promptPath,
-    title: `lifecycle-preflight:${options.versionId}`,
-    artifactsPath,
-    format: options.opencodeFormat,
-    autoApprove: options.autoApprove,
-    timeoutMs: options.timeoutMs,
-    maxAttempts: Math.min(options.maxAttempts, options.maxContinuations + 1),
-    purpose: options.purpose ?? "preflight"
-  });
+  const preflightWorkspacePath = await mkdtemp(path.join(os.tmpdir(), "ape-preflight-"));
+  await copyDirFiltered(options.workspacePath, preflightWorkspacePath);
+  let result;
+  try {
+    result = await runOpenCode({
+      model: options.providerModel,
+      cwd: preflightWorkspacePath,
+      prompt,
+      promptPath,
+      title: `lifecycle-preflight:${options.versionId}`,
+      artifactsPath,
+      format: options.opencodeFormat,
+      autoApprove: options.autoApprove,
+      timeoutMs: options.timeoutMs,
+      maxAttempts: Math.min(options.maxAttempts, options.maxContinuations + 1),
+      purpose: options.purpose ?? "preflight"
+    });
+  } finally {
+    await rm(preflightWorkspacePath, { recursive: true, force: true });
+  }
   const decision = result.ok ? parseDecision(result.parsed.assistantText) : unknownDecision(`OpenCode failed with exit code ${result.exitCode}`);
   await writeFile(path.join(artifactsPath, "agent-decision.json"), JSON.stringify(decision, null, 2), "utf8");
   return { decision, usage: result.parsed.usage, artifactsPath, scenarioId: scenario?.id ?? null };
