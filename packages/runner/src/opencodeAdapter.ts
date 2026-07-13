@@ -127,7 +127,13 @@ async function runSingleOpenCode(request: OpenCodeRunRequest & { sessionId?: str
     args.push("--auto");
   }
 
-  args.push(request.continuation ? request.prompt : "Read the attached benchmark prompt and implement the requested app.");
+  args.push(
+    request.continuation
+      ? request.prompt
+      : request.purpose === "preflight" || request.purpose === "clarification"
+        ? "Read the attached benchmark prompt and follow its instructions exactly."
+        : "Read the attached benchmark prompt and implement the requested app."
+  );
 
   if (request.promptPath) {
     args.push("--file", request.promptPath);
