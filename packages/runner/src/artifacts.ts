@@ -474,7 +474,7 @@ export function buildTrajectorySummary(options: {
       clarification_rounds: clarificationEvents.length,
       questions_total: clarificationEvents.reduce((total, event) => total + event.question_count, 0),
       answer_words: clarificationEvents.reduce((total, event) => total + event.answer_words, 0),
-      clarification_limit_reached: 0
+      clarification_limit_reached: options.versions.filter((version) => version.failed_phase === "clarification_limit_reached").length
     },
     actual_human_activity: {
       human_answers_total: humanEvents.length,

@@ -878,7 +878,7 @@ async function prepareImplementationAfterPreflight(options: {
       throw new Error(`Requirements preflight for ${options.versionId} returned ${preflight.decision.decision}: ${preflight.decision.reason}`);
     }
     if (round >= options.config.clarification.maxRounds) {
-      throw new Error(`Clarification limit reached for ${options.versionId}`);
+      throw new ClarificationLimitReachedError(options.versionId);
     }
     const clarification = await resolveLifecycleClarification({
       rootDir: options.rootDir,
@@ -902,7 +902,7 @@ async function prepareImplementationAfterPreflight(options: {
     });
     preparedPrompt = appendClarificationToImplementationPrompt(preparedPrompt, clarification.answer, clarification.source);
   }
-  throw new Error(`Clarification limit reached for ${options.versionId}`);
+  throw new ClarificationLimitReachedError(options.versionId);
 }
 
 type PreparedImplementation = {
@@ -911,6 +911,13 @@ type PreparedImplementation = {
   clarificationUsage: AgentUsage[];
   feedbackEvents: FeedbackEvent[];
 };
+
+class ClarificationLimitReachedError extends Error {
+  constructor(versionId: string) {
+    super(`Clarification limit reached for ${versionId}`);
+    this.name = "ClarificationLimitReachedError";
+  }
+}
 
 function emptyPreparedImplementation(prompt: string): PreparedImplementation {
   return { prompt, preflightUsage: [], clarificationUsage: [], feedbackEvents: [] };
@@ -930,20 +937,21 @@ async function finalizeUnhandledVersion(options: {
   error: unknown;
 }): Promise<void> {
   const message = options.error instanceof Error ? options.error.message : String(options.error);
+  const clarificationLimitReached = options.error instanceof ClarificationLimitReachedError;
   const failure = {
     status: "failed" as const,
-    classification: "harness_failure" as const,
-    failed_phase: "evaluation_running",
-    failed_checks: ["evaluation_running"],
+    classification: clarificationLimitReached ? "model_failure" as const : "harness_failure" as const,
+    failed_phase: clarificationLimitReached ? "clarification_limit_reached" : "evaluation_running",
+    failed_checks: [clarificationLimitReached ? "clarification_limit_reached" : "evaluation_running"],
     infra_suspected: false,
     messages: [message],
     artifact_paths: {}
   };
   await writeFailureSummary(options.artifactsPath, failure);
-  const metadata = { ...options.metadata, completed_at: new Date().toISOString(), status: "failed" as const, failure_classification: "harness_failure" as const };
+  const metadata = { ...options.metadata, completed_at: new Date().toISOString(), status: "failed" as const, failure_classification: clarificationLimitReached ? "model_failure" as const : "harness_failure" as const };
   await writeRunMetadata(options.artifactsPath, metadata);
   await writeTerminalRunReport({ artifactsPath: options.artifactsPath, metadata, failureSummary: failure });
-  options.versionSummaries.push(await buildTerminalVersionSummary({ versionId: options.versionId, classification: "harness_failure", failedPhase: "evaluation_running", artifactsPath: options.artifactsPath, generationUsage: unavailableAgentUsage() }));
+  options.versionSummaries.push(await buildTerminalVersionSummary({ versionId: options.versionId, classification: clarificationLimitReached ? "model_failure" : "harness_failure", failedPhase: clarificationLimitReached ? "clarification_limit_reached" : "evaluation_running", artifactsPath: options.artifactsPath, generationUsage: unavailableAgentUsage() }));
   await writeTrajectoryArtifacts(options.trajectoryArtifactsPath, buildTrajectorySummary({ trajectory: options.trajectory, runType: options.runType, versionsRequested: options.editVersions, versions: options.versionSummaries, totalLatencyMs: options.totalLatencyMs }));
   await finalizeExecution(options.execution, "failed");
 }
