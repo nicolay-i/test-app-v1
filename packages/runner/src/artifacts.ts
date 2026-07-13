@@ -54,6 +54,16 @@ export type DiffMetrics = {
   package_json_changed: boolean;
 };
 
+export type FeedbackEvent = {
+  kind: "preflight" | "clarification" | "repair" | "continuation";
+  automatic: boolean;
+  source: "none" | "oracle_answer" | "scenario_answer" | "human_answer" | "human_prompt_correction" | "human_acceptance_correction" | "human_code_edit";
+  round: number | null;
+  question_count: number;
+  answer_words: number;
+  artifacts_path: string;
+};
+
 export type TrajectoryVersionSummary = {
   version_id: string;
   status: "passed" | "failed" | "incomplete" | "aborted";
@@ -68,8 +78,11 @@ export type TrajectoryVersionSummary = {
   largest_file_loc: number | null;
   diff: DiffMetrics;
   generation_usage: AgentUsage;
+  preflight_usage: AgentUsage[];
+  clarification_usage: AgentUsage[];
   repair_usage: AgentUsage[];
   version_total_usage: AgentUsage;
+  feedback_events: FeedbackEvent[];
   artifacts_path: string;
 };
 
@@ -110,6 +123,23 @@ export type TrajectorySummary = {
   repair_token_ratio: number | null;
   successful_versions_per_100k_tokens: number | null;
   quality_adjusted_survival_per_100k_tokens: number | null;
+  required_supervision: {
+    versions_requiring_clarification: number;
+    clarification_rounds: number;
+    questions_total: number;
+    answer_words: number;
+    clarification_limit_reached: number;
+  };
+  actual_human_activity: {
+    human_answers_total: number;
+    human_answer_words: number;
+    human_prompt_corrections: number;
+    human_acceptance_corrections: number;
+    human_code_edits: number;
+    manual_files_changed: number;
+    manual_lines_added: number;
+    manual_lines_deleted: number;
+  };
   versions: TrajectoryVersionSummary[];
 };
 
@@ -325,8 +355,11 @@ export async function buildTerminalVersionSummary(options: {
     largest_file_loc: null,
     diff: await readDiffMetrics(path.join(options.artifactsPath, "git.diff")),
     generation_usage: generationUsage,
+    preflight_usage: [],
+    clarification_usage: [],
     repair_usage: [],
     version_total_usage: generationUsage,
+    feedback_events: [],
     artifacts_path: options.artifactsPath
   };
 }
@@ -387,11 +420,13 @@ export function buildTrajectorySummary(options: {
   const qualityDegradationSlope = evaluatedScores.length < 2
     ? null
     : linearSlope(evaluatedScores.map((item) => item.index), evaluatedScores.map((item) => item.score));
-  const lifecycleUsage = aggregateUsage(options.versions.flatMap((version) => [version.generation_usage, ...version.repair_usage]));
+  const lifecycleUsage = aggregateUsage(options.versions.flatMap((version) => [version.generation_usage, ...version.preflight_usage, ...version.clarification_usage, ...version.repair_usage]));
   const lifecycleTokens = lifecycleUsage.status === "complete" ? lifecycleUsage.totalTokens : null;
   const lifecycleReportedCost = lifecycleUsage.status === "complete" ? lifecycleUsage.reportedCost : null;
   const successfulVersions = options.versions.filter((version) => version.status === "passed").length;
   const repairUsage = aggregateUsage(options.versions.flatMap((version) => version.repair_usage));
+  const clarificationEvents = options.versions.flatMap((version) => version.feedback_events.filter((event) => event.kind === "clarification"));
+  const humanEvents = options.versions.flatMap((version) => version.feedback_events.filter((event) => event.source === "human_answer"));
 
   return {
     schema_version: "0.1.0",
@@ -434,6 +469,23 @@ export function buildTrajectorySummary(options: {
       : null,
     successful_versions_per_100k_tokens: lifecycleTokens !== null && lifecycleTokens > 0 ? successfulVersions / lifecycleTokens * 100000 : null,
     quality_adjusted_survival_per_100k_tokens: lifecycleTokens !== null && lifecycleTokens > 0 ? options.versions.reduce((total, version) => total + (version.score ?? 0), 0) / lifecycleTokens * 100000 : null,
+    required_supervision: {
+      versions_requiring_clarification: options.versions.filter((version) => version.feedback_events.some((event) => event.kind === "clarification")).length,
+      clarification_rounds: clarificationEvents.length,
+      questions_total: clarificationEvents.reduce((total, event) => total + event.question_count, 0),
+      answer_words: clarificationEvents.reduce((total, event) => total + event.answer_words, 0),
+      clarification_limit_reached: 0
+    },
+    actual_human_activity: {
+      human_answers_total: humanEvents.length,
+      human_answer_words: humanEvents.reduce((total, event) => total + event.answer_words, 0),
+      human_prompt_corrections: 0,
+      human_acceptance_corrections: 0,
+      human_code_edits: 0,
+      manual_files_changed: 0,
+      manual_lines_added: 0,
+      manual_lines_deleted: 0
+    },
     versions: options.versions
   };
 }

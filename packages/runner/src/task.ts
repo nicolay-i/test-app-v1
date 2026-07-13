@@ -16,6 +16,7 @@ export type TaskEvolutionStep = {
   prompt: string;
   tests: string[];
   disabledTests: string[];
+  clarificationScenario?: string;
 };
 
 export async function loadTaskEvolution(taskDir: string): Promise<TaskEvolutionStep[]> {
@@ -33,7 +34,8 @@ export async function loadTaskEvolution(taskDir: string): Promise<TaskEvolutionS
       tests: Array.isArray(step.tests) ? step.tests.filter((item): item is string => typeof item === "string") : [],
       disabledTests: Array.isArray(step.disabledTests)
         ? step.disabledTests.filter((item): item is string => typeof item === "string")
-        : []
+        : [],
+      ...(typeof step.clarificationScenario === "string" ? { clarificationScenario: step.clarificationScenario } : {})
     }))
     .filter((step) => step.id.length > 0 && step.prompt.length > 0);
 }

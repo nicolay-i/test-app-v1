@@ -79,6 +79,7 @@ evolution:
 
   - id: 03-add-tags
     prompt: evolution/03-add-tags.md
+    clarificationScenario: 03-underspecified-tags
     tests:
       - tests/evolution/03-tags.spec.ts
 

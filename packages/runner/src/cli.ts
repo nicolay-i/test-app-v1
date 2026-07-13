@@ -21,6 +21,8 @@ import {
   runNegotiationPreflight,
   scenarioEvolutionStepIndex
 } from "./negotiation.js";
+import { appendClarificationToImplementationPrompt, resolveLifecycleClarification, runLifecyclePreflight } from "./lifecyclePreflight.js";
+import { verifyLifecyclePreflightFixture } from "./lifecyclePreflight.fixtures.js";
 import { runOpenCode, type OpenCodeRunResult } from "./opencodeAdapter.js";
 import { verifyOpenCodeRetryFixture } from "./opencodeAdapter.fixtures.js";
 import { parseOpenCodeEvents, type AgentUsage } from "./opencodeEventParser.js";
@@ -43,6 +45,7 @@ import {
   unavailableAgentUsage,
   type RunMetadata,
   type RunType,
+  type FeedbackEvent,
   type TrajectoryVersionSummary
 } from "./artifacts.js";
 import {
@@ -132,6 +135,9 @@ async function main(): Promise<void> {
         break;
       case "verify-opencode-retry":
         await verifyOpenCodeRetryCommand();
+        break;
+      case "verify-lifecycle-preflight":
+        await verifyLifecyclePreflightCommand();
         break;
       case "negotiate-one":
         await negotiateOneCommand(args);
@@ -237,6 +243,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
   const runType = readRunType(args, mockOpenCode);
   const useMockOpenCode = mockOpenCode || runType === "mock";
   const mockProfile = stringOption(args, "mock-profile", "happy");
+  const clarificationAnswer = optionalStringOption(args, "clarification-answer");
   const requestedVersions = numberOption(args, "versions", 0);
   const skipInstall = booleanOption(args, "skip-install", false);
   const selectedBase = selectTrajectory(config, args);
@@ -295,6 +302,18 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     trajectory: selected,
     versionId: "v0",
     artifactsPath
+  });
+  const v0Preparation = dryRun ? emptyPreparedImplementation(compiled.prompt) : await prepareImplementationAfterPreflight({
+    rootDir,
+    config,
+    trajectory: selected,
+    runType,
+    workspacePath: workspace.workspacePath,
+    artifactsPath,
+    versionId: "v0",
+    prompt: compiled.prompt,
+    promptPath: compiled.promptPath,
+    ...(clarificationAnswer ? { clarificationAnswer } : {})
   });
 
   console.log(`trajectory: ${selected.trajectoryId}`);
@@ -373,7 +392,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     : await runOpenCode({
         model: selected.providerModel,
         cwd: workspace.workspacePath,
-        prompt: compiled.prompt,
+        prompt: v0Preparation.prompt,
         promptPath: compiled.promptPath,
         title: `${selected.trajectoryId}:v0`,
         artifactsPath,
@@ -484,7 +503,10 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       repairAttempts: v0Repair?.attempts ?? 0,
       repairSuccess: v0Repair?.success ?? false,
       generationUsage: opencode.parsed.usage,
-      repairUsage: v0Repair?.usage ?? []
+      preflightUsage: v0Preparation.preflightUsage,
+      clarificationUsage: v0Preparation.clarificationUsage,
+      repairUsage: v0Repair?.usage ?? [],
+      feedbackEvents: v0Preparation.feedbackEvents
     })
   );
   metadata = {
@@ -553,6 +575,19 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       evolutionStep: evolution[index]!,
       knownFailures: previousFailureMessages
     });
+    const editPreparation = await prepareImplementationAfterPreflight({
+      rootDir,
+      config,
+      trajectory: selected,
+      runType,
+      workspacePath: workspace.workspacePath,
+      artifactsPath: editArtifactsPath,
+      versionId,
+      prompt: editPrompt.prompt,
+      promptPath: editPrompt.promptPath,
+      ...(evolution[index]!.clarificationScenario ? { clarificationScenario: evolution[index]!.clarificationScenario } : {}),
+      ...(clarificationAnswer ? { clarificationAnswer } : {})
+    });
     let editMetadata = buildInitialRunMetadata({
       runType,
       executionId: execution.executionId,
@@ -570,7 +605,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       : await runOpenCode({
           model: selected.providerModel,
           cwd: workspace.workspacePath,
-          prompt: editPrompt.prompt,
+          prompt: editPreparation.prompt,
           promptPath: editPrompt.promptPath,
           title: `${selected.trajectoryId}:${versionId}`,
           artifactsPath: editArtifactsPath,
@@ -671,7 +706,10 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         repairAttempts: editRepair?.attempts ?? 0,
         repairSuccess: editRepair?.success ?? false,
         generationUsage: editOpenCode.parsed.usage,
-        repairUsage: editRepair?.usage ?? []
+        preflightUsage: editPreparation.preflightUsage,
+        clarificationUsage: editPreparation.clarificationUsage,
+        repairUsage: editRepair?.usage ?? [],
+        feedbackEvents: editPreparation.feedbackEvents
       })
     );
     editMetadata = {
@@ -738,7 +776,10 @@ async function buildVersionSummary(options: {
   repairAttempts?: number;
   repairSuccess?: boolean;
   generationUsage: AgentUsage;
+  preflightUsage?: AgentUsage[];
+  clarificationUsage?: AgentUsage[];
   repairUsage?: AgentUsage[];
+  feedbackEvents?: FeedbackEvent[];
 }): Promise<TrajectoryVersionSummary> {
   return {
     version_id: options.evaluation.version_id,
@@ -754,10 +795,111 @@ async function buildVersionSummary(options: {
     largest_file_loc: options.evaluation.metrics.code_health.largest_file.loc,
     diff: await readDiffMetrics(path.join(options.artifactsPath, "git.diff")),
     generation_usage: options.generationUsage,
+    preflight_usage: options.preflightUsage ?? [],
+    clarification_usage: options.clarificationUsage ?? [],
     repair_usage: options.repairUsage ?? [],
-    version_total_usage: combineVersionUsage(options.generationUsage, options.repairUsage ?? []),
+    version_total_usage: combineVersionUsage(options.generationUsage, [...(options.preflightUsage ?? []), ...(options.clarificationUsage ?? []), ...(options.repairUsage ?? [])]),
+    feedback_events: options.feedbackEvents ?? [],
     artifacts_path: options.artifactsPath
   };
+}
+
+async function prepareImplementationAfterPreflight(options: {
+  rootDir: string;
+  config: MatrixConfig;
+  trajectory: TrajectoryPlan;
+  runType: RunType;
+  workspacePath: string;
+  artifactsPath: string;
+  versionId: string;
+  prompt: string;
+  promptPath: string;
+  clarificationScenario?: string;
+  clarificationAnswer?: string;
+}): Promise<PreparedImplementation> {
+  let preparedPrompt = options.prompt;
+  let resolvedAnswer: string | undefined;
+  const preflightUsage: AgentUsage[] = [];
+  const clarificationUsage: AgentUsage[] = [];
+  const feedbackEvents: FeedbackEvent[] = [];
+  for (let round = 0; round <= options.config.clarification.maxRounds; round += 1) {
+    const preflight = await runLifecyclePreflight({
+      rootDir: options.rootDir,
+      taskId: options.trajectory.taskId,
+      versionId: options.versionId,
+      request: preparedPrompt,
+      artifactsPath: options.artifactsPath,
+      workspacePath: options.workspacePath,
+      providerModel: options.trajectory.providerModel,
+      runType: options.runType,
+      opencodeFormat: options.config.opencode.format,
+      autoApprove: options.config.opencode.autoApprove,
+      timeoutMs: options.config.opencode.timeoutMs,
+      maxAttempts: options.config.opencode.maxAttempts,
+      maxContinuations: options.config.opencode.maxContinuations,
+      ...(options.clarificationScenario ? { scenarioId: options.clarificationScenario } : {}),
+      ...(resolvedAnswer ? { resolvedAnswer, purpose: "clarification" as const, round } : {})
+    });
+    if (round === 0) preflightUsage.push(preflight.usage);
+    else clarificationUsage.push(preflight.usage);
+    feedbackEvents.push({
+      kind: "preflight",
+      automatic: true,
+      source: "none",
+      round: round === 0 ? null : round,
+      question_count: 0,
+      answer_words: 0,
+      artifacts_path: preflight.artifactsPath
+    });
+    const diffPath = path.join(preflight.artifactsPath, "preflight.git.diff");
+    await captureGitDiff(options.workspacePath, diffPath);
+    if ((await readFile(diffPath, "utf8")).trim()) {
+      throw new Error(`Requirements preflight modified the workspace for ${options.versionId}`);
+    }
+    if (preflight.decision.decision === "proceed") {
+      await writeFile(options.promptPath, preparedPrompt, "utf8");
+      return { prompt: preparedPrompt, preflightUsage, clarificationUsage, feedbackEvents };
+    }
+    if (preflight.decision.decision !== "clarify") {
+      throw new Error(`Requirements preflight for ${options.versionId} returned ${preflight.decision.decision}: ${preflight.decision.reason}`);
+    }
+    if (round >= options.config.clarification.maxRounds) {
+      throw new Error(`Clarification limit reached for ${options.versionId}`);
+    }
+    const clarification = await resolveLifecycleClarification({
+      rootDir: options.rootDir,
+      taskId: options.trajectory.taskId,
+      scenarioId: preflight.scenarioId,
+      answerSource: options.config.clarification.answerSource,
+      ...(options.clarificationAnswer ? { humanAnswer: options.clarificationAnswer } : {}),
+      artifactsPath: options.artifactsPath,
+      round: round + 1,
+      questions: preflight.decision.questions
+    });
+    resolvedAnswer = clarification.answer;
+    feedbackEvents.push({
+      kind: "clarification",
+      automatic: clarification.source !== "human_answer",
+      source: clarification.source,
+      round: round + 1,
+      question_count: preflight.decision.questions.length,
+      answer_words: clarification.answer.trim() ? clarification.answer.trim().split(/\s+/).length : 0,
+      artifacts_path: clarification.artifactsPath
+    });
+    preparedPrompt = appendClarificationToImplementationPrompt(preparedPrompt, clarification.answer, clarification.source);
+  }
+  throw new Error(`Clarification limit reached for ${options.versionId}`);
+}
+
+type PreparedImplementation = {
+  prompt: string;
+  preflightUsage: AgentUsage[];
+  clarificationUsage: AgentUsage[];
+  feedbackEvents: FeedbackEvent[];
+};
+
+function emptyPreparedImplementation(prompt: string): PreparedImplementation {
+  return { prompt, preflightUsage: [], clarificationUsage: [], feedbackEvents: [] };
 }
 
 async function finalizeUnhandledVersion(options: {
@@ -1481,6 +1623,12 @@ async function verifyOpenCodeRetryCommand(): Promise<void> {
   console.log("OpenCode retry fixture: passed");
 }
 
+async function verifyLifecyclePreflightCommand(): Promise<void> {
+  const failures = await verifyLifecyclePreflightFixture(process.cwd());
+  if (failures.length) throw new Error(`Lifecycle preflight fixture failures: ${failures.join(", ")}`);
+  console.log("Lifecycle preflight fixture: passed");
+}
+
 async function negotiateOneCommand(args: CliArgs): Promise<void> {
   const rootDir = process.cwd();
   const configPath = resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml"));
@@ -2016,6 +2164,7 @@ function printHelp(): void {
   pnpm bench record-proof --execution <execution-id> --out proof/<name>.json --command "pnpm bench run-one ..."
   pnpm bench verify-opencode-parser
   pnpm bench verify-opencode-retry
+  pnpm bench verify-lifecycle-preflight
   pnpm bench negotiate-one --task todomvc --scenario 03-underspecified-tags --model deepseek-v4-flash-free --system S2-maintainable-simple --run-type mock
   pnpm bench negotiate-one --task todomvc --scenario 03-underspecified-tags --model deepseek-v4-flash-free --system S2-maintainable-simple --run-type mock --full
   pnpm bench export-jury-packet --trajectory <trajectory-id> --blind --out jury-packets/<packet-id>

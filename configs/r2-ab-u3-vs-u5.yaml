@@ -10,6 +10,10 @@ opencode:
   maxAttempts: 2
   maxContinuations: 1
 
+clarification:
+  maxRounds: 2
+  answerSource: oracle
+
 scaffold:
   id: vite-react-ts
   path: scaffolds/vite-react-ts

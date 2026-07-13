@@ -15,6 +15,10 @@ export type MatrixConfig = {
     maxAttempts: number;
     maxContinuations: number;
   };
+  clarification: {
+    maxRounds: number;
+    answerSource: "oracle" | "scenario" | "human";
+  };
   scaffold: {
     id: string;
     path: string;

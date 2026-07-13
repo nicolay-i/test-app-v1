@@ -21,6 +21,7 @@ function normalizeMatrixConfig(value: Record<string, unknown>): MatrixConfig {
   const prompts = requiredRecord(value, "prompts");
   const opencode = requiredRecord(value, "opencode");
   const scaffold = requiredRecord(value, "scaffold");
+  const clarification = optionalRecord(value, "clarification");
 
   return {
     id: requiredString(value, "id"),
@@ -33,6 +34,10 @@ function normalizeMatrixConfig(value: Record<string, unknown>): MatrixConfig {
       timeoutMs: optionalNumber(opencode, "timeoutMs", 900000),
       maxAttempts: optionalNumber(opencode, "maxAttempts", 2),
       maxContinuations: optionalNumber(opencode, "maxContinuations", 1)
+    },
+    clarification: {
+      maxRounds: optionalNumber(clarification, "maxRounds", 2),
+      answerSource: optionalEnum(clarification, "answerSource", ["oracle", "scenario", "human"], "oracle")
     },
     scaffold: {
       id: requiredString(scaffold, "id"),
@@ -51,6 +56,13 @@ function normalizeMatrixConfig(value: Record<string, unknown>): MatrixConfig {
     concurrency: optionalNumber(value, "concurrency", 1),
     randomizeOrder: optionalBoolean(value, "randomizeOrder", false)
   };
+}
+
+function optionalRecord(source: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = source[key];
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new Error(`Config field "${key}" must be an object`);
+  return value;
 }
 
 function requiredModels(source: Record<string, unknown>, key: string): ModelConfig[] {

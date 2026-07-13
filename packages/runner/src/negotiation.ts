@@ -106,7 +106,7 @@ export async function runNegotiationPreflight(options: {
   };
 }
 
-function buildDecisionPrompt(scenario: NegotiationScenario, currentAppContext?: string): string {
+export function buildDecisionPrompt(scenario: NegotiationScenario, currentAppContext?: string): string {
   return [
     "# Requirements Negotiation Preflight",
     "",
