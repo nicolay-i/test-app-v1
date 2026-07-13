@@ -306,26 +306,6 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     versionId: "v0",
     artifactsPath
   });
-  const v0Preparation = dryRun ? emptyPreparedImplementation(compiled.prompt) : await prepareImplementationAfterPreflight({
-    rootDir,
-    config,
-    trajectory: selected,
-    runType,
-    workspacePath: workspace.workspacePath,
-    artifactsPath,
-    versionId: "v0",
-    prompt: compiled.prompt,
-    promptPath: compiled.promptPath,
-    ...(clarificationAnswer ? { clarificationAnswer } : {})
-  });
-
-  console.log(`trajectory: ${selected.trajectoryId}`);
-  console.log(`execution: ${execution.executionId}${execution.resumed ? " (resumed)" : ""}`);
-  console.log(`run type: ${runType}`);
-  console.log(`edit versions: ${editVersions}`);
-  console.log(`workspace: ${workspace.workspacePath}`);
-  console.log(`prompt: ${compiled.promptPath}`);
-
   let metadata: RunMetadata = buildInitialRunMetadata({
     runType,
     executionId: execution.executionId,
@@ -337,6 +317,31 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     startedAt
   });
   await writeRunMetadata(artifactsPath, metadata);
+  let v0Preparation: PreparedImplementation;
+  try {
+    v0Preparation = dryRun ? emptyPreparedImplementation(compiled.prompt) : await prepareImplementationAfterPreflight({
+      rootDir,
+      config,
+      trajectory: selected,
+      runType,
+      workspacePath: workspace.workspacePath,
+      artifactsPath,
+      versionId: "v0",
+      prompt: compiled.prompt,
+      promptPath: compiled.promptPath,
+      ...(clarificationAnswer ? { clarificationAnswer } : {})
+    });
+  } catch (error) {
+    await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath, metadata, versionId: "v0", error });
+    throw error;
+  }
+
+  console.log(`trajectory: ${selected.trajectoryId}`);
+  console.log(`execution: ${execution.executionId}${execution.resumed ? " (resumed)" : ""}`);
+  console.log(`run type: ${runType}`);
+  console.log(`edit versions: ${editVersions}`);
+  console.log(`workspace: ${workspace.workspacePath}`);
+  console.log(`prompt: ${compiled.promptPath}`);
 
   if (dryRun) {
     for (let index = 0; index < editVersions; index += 1) {
@@ -578,19 +583,6 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       evolutionStep: evolution[index]!,
       knownFailures: previousFailureMessages
     });
-    const editPreparation = await prepareImplementationAfterPreflight({
-      rootDir,
-      config,
-      trajectory: selected,
-      runType,
-      workspacePath: workspace.workspacePath,
-      artifactsPath: editArtifactsPath,
-      versionId,
-      prompt: editPrompt.prompt,
-      promptPath: editPrompt.promptPath,
-      ...(evolution[index]!.clarificationScenario ? { clarificationScenario: evolution[index]!.clarificationScenario } : {}),
-      ...(clarificationAnswer ? { clarificationAnswer } : {})
-    });
     let editMetadata = buildInitialRunMetadata({
       runType,
       executionId: execution.executionId,
@@ -602,6 +594,25 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       startedAt: editStartedAt
     });
     await writeRunMetadata(editArtifactsPath, editMetadata);
+    let editPreparation: PreparedImplementation;
+    try {
+      editPreparation = await prepareImplementationAfterPreflight({
+        rootDir,
+        config,
+        trajectory: selected,
+        runType,
+        workspacePath: workspace.workspacePath,
+        artifactsPath: editArtifactsPath,
+        versionId,
+        prompt: editPrompt.prompt,
+        promptPath: editPrompt.promptPath,
+        ...(evolution[index]!.clarificationScenario ? { clarificationScenario: evolution[index]!.clarificationScenario } : {}),
+        ...(clarificationAnswer ? { clarificationAnswer } : {})
+      });
+    } catch (error) {
+      await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath: editArtifactsPath, metadata: editMetadata, versionId, error });
+      throw error;
+    }
 
     const editOpenCode = useMockOpenCode
       ? await runMockOpenCode(workspace.workspacePath, editArtifactsPath, index, mockProfile)
