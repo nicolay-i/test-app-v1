@@ -22,6 +22,7 @@ import {
   scenarioEvolutionStepIndex
 } from "./negotiation.js";
 import { runOpenCode, type OpenCodeRunResult } from "./opencodeAdapter.js";
+import { verifyOpenCodeRetryFixture } from "./opencodeAdapter.fixtures.js";
 import { parseOpenCodeEvents, type AgentUsage } from "./opencodeEventParser.js";
 import { verifyOpenCodeEventParserFixtures } from "./opencodeEventParser.fixtures.js";
 import { compileEditPrompt, compileRepairPrompt, compileV0Prompt } from "./promptCompiler.js";
@@ -128,6 +129,9 @@ async function main(): Promise<void> {
         break;
       case "verify-opencode-parser":
         await verifyOpenCodeParserCommand();
+        break;
+      case "verify-opencode-retry":
+        await verifyOpenCodeRetryCommand();
         break;
       case "negotiate-one":
         await negotiateOneCommand(args);
@@ -1489,6 +1493,12 @@ async function verifyOpenCodeParserCommand(): Promise<void> {
   console.log("OpenCode parser fixtures: passed");
 }
 
+async function verifyOpenCodeRetryCommand(): Promise<void> {
+  const failures = await verifyOpenCodeRetryFixture();
+  if (failures.length) throw new Error(`OpenCode retry fixture failures: ${failures.join(", ")}`);
+  console.log("OpenCode retry fixture: passed");
+}
+
 async function negotiateOneCommand(args: CliArgs): Promise<void> {
   const rootDir = process.cwd();
   const configPath = resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml"));
@@ -2022,6 +2032,7 @@ function printHelp(): void {
   pnpm bench verify-run --execution <execution-id>
   pnpm bench record-proof --execution <execution-id> --out proof/<name>.json --command "pnpm bench run-one ..."
   pnpm bench verify-opencode-parser
+  pnpm bench verify-opencode-retry
   pnpm bench negotiate-one --task todomvc --scenario 03-underspecified-tags --model deepseek-v4-flash-free --system S2-maintainable-simple --run-type mock
   pnpm bench negotiate-one --task todomvc --scenario 03-underspecified-tags --model deepseek-v4-flash-free --system S2-maintainable-simple --run-type mock --full
   pnpm bench export-jury-packet --trajectory <trajectory-id> --blind --out jury-packets/<packet-id>

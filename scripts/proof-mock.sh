@@ -38,6 +38,7 @@ expect_failure_and_verify() {
 pnpm typecheck
 pnpm bench validate-task tasks/todomvc
 pnpm bench verify-opencode-parser
+pnpm bench verify-opencode-retry
 
 happy_execution=$(run_and_verify 701 --versions 4 --mock-profile happy | tail -1)
 failure_execution=$(expect_failure_and_verify 702 --versions 0 --mock-profile opencode-fail-v0 | tail -1)
