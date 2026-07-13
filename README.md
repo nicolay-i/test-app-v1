@@ -22,6 +22,7 @@ pnpm bench run-one \
 pnpm bench run-matrix --config configs/mvp.yaml --dry-run
 pnpm bench run-matrix --config configs/mvp.yaml --run-type mock --versions 2 --max-trajectories 2
 pnpm bench run-matrix --config configs/r2-ab-u3-vs-u5.yaml --run-type real --versions 2
+pnpm bench report-experiment --config configs/r2-ab-u3-vs-u5.yaml --id r2-observable-u3-u5 --executions <execution-id>
 pnpm bench aggregate --config configs/mvp.yaml --execution <execution-id>
 pnpm bench verify-run --execution <execution-id>
 pnpm bench record-proof --execution <execution-id> --out proof/<name>.json --command "pnpm bench run-one ..."
@@ -43,12 +44,14 @@ pnpm bench import-jury-review --trajectory <trajectory-id> --review jury-packets
 
 ## Текущая область
 
-Runner поддерживает TodoMVC-траекторию: генерацию v0, эволюционные промпты v1..v4, накопительные регрессионные тесты, одну попытку ремонта, артефакты по версиям, сводки траекторий, агрегацию, сценарии переговоров и экспорт/импорт слепых пакетов жюри.
+Runner поддерживает TodoMVC-траекторию: генерацию v0, эволюционные промпты v1..v4, накопительные регрессионные тесты, несколько попыток repair (`repair-N`), requirements preflight с clarification rounds, continuation той же OpenCode session, артефакты по версиям, сводки траекторий, агрегацию, сценарии переговоров и экспорт/импорт слепых пакетов жюри.
 
 `--run-type mock` использует детерминированный локальный генератор и исключается из leaderboard. `--run-type real` вызывает OpenCode. Реальный запуск требует чистого git-дерева; `--allow-dirty` предназначен только для диагностики и помечает execution как непригодный для публикации. Для такого запуска сохраняются `source.patch` и его SHA-256.
 
 Каждый `run-one` и `run-matrix` по умолчанию создаёт новое execution. Возобновление требует `--resume <execution-id>` и отклоняет изменения типа запуска, исходного кода runner-а, состояния репозитория, config/task/prompt/scaffold-хешей, числа версий, mock-профиля или определения траектории. `--fresh` и `--force-new-execution` — явные синонимы нового запуска; их нельзя сочетать с `--resume`.
 
-`run-matrix` сначала следует применять к малым контролируемым пакетам через `--max-trajectories` и `--versions`.
+В R2-matrix arm ограничен тремя trajectories. Выполнение фиксируется в `experiment-manifest.json`; после первого успешного cumulative case оставшиеся trajectories этого arm помечаются `skipped_after_first_success` и не запускаются.
 
-`pnpm proof:mock` — детерминированный локальный набор proof-проверок без учётных данных провайдера. Это обязательная pre-merge проверка; GitHub Actions workflow в репозитории сейчас не настроен. Набор проверяет parser fixtures, mock lifecycle и конечные сценарии ошибок, repair, проверку артефактов, исключение mock из leaderboard и строгое возобновление.
+Фактические ручные действия передаются только явным JSONL-журналом `--interventions <path>`. Каждая запись содержит `version_id`, `kind` (`human_prompt_correction`, `human_acceptance_correction` или `human_code_edit`) и `text`; для `human_code_edit` обязательны/допустимы counters `manual_files_changed`, `manual_lines_added`, `manual_lines_deleted`. Runner сохраняет исходный журнал в artifacts и отделяет эти counters от oracle/scenario clarifications.
+
+`pnpm proof:mock` и `pnpm proof:fairness` — детерминированные локальные proof-проверки без учётных данных провайдера. Fairness proof включает контрольные реализации и mutations для completed-filter, due dates и search. GitHub Actions workflow пока не настроен.

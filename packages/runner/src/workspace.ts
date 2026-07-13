@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { runCommand } from "./command.js";
 import { copyDirFiltered, ensureDir, pathExists } from "./fs.js";
@@ -17,7 +18,7 @@ export async function prepareWorkspace(options: {
   trajectory: TrajectoryPlan;
   executionId: string;
 }): Promise<WorkspaceResult> {
-  const workspacePath = path.join(options.runDir, "workspaces", options.trajectory.trajectoryId);
+  const workspacePath = await workspacePathForTrajectory(options.runDir, options.trajectory.trajectoryId);
   const metadataPath = path.join(workspacePath, ".ape-trajectory.json");
 
   if (await pathExists(metadataPath)) {
@@ -34,6 +35,13 @@ export async function prepareWorkspace(options: {
 
   await ensureDir(path.dirname(workspacePath));
   await copyDirFiltered(options.scaffoldPath, workspacePath);
+  if (process.env.APE_REUSE_SCAFFOLD_NODE_MODULES === "true") {
+    const sourceNodeModules = path.join(options.scaffoldPath, "node_modules");
+    const targetNodeModules = path.join(workspacePath, "node_modules");
+    if (await pathExists(sourceNodeModules)) {
+      await symlink(sourceNodeModules, targetNodeModules, process.platform === "win32" ? "junction" : "dir");
+    }
+  }
   await writeFile(path.join(workspacePath, "pnpm-workspace.yaml"), "packages: []\n", "utf8");
   await writeFile(
     metadataPath,
@@ -67,6 +75,14 @@ export async function prepareWorkspace(options: {
     metadataPath,
     created: true
   };
+}
+
+/** Keeps nested pnpm paths under Windows' executable path limit. */
+export async function workspacePathForTrajectory(runDir: string, trajectoryId: string): Promise<string> {
+  const compact = path.join(runDir, "workspaces", `w-${createHash("sha256").update(trajectoryId).digest("hex").slice(0, 16)}`);
+  if (await pathExists(compact)) return compact;
+  const legacy = path.join(runDir, "workspaces", trajectoryId);
+  return (await pathExists(legacy)) ? legacy : compact;
 }
 
 export async function captureGitDiff(workspacePath: string, outputPath: string): Promise<void> {

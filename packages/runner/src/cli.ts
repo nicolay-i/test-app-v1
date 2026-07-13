@@ -46,7 +46,8 @@ import {
   type RunMetadata,
   type RunType,
   type FeedbackEvent,
-  type TrajectoryVersionSummary
+  type TrajectoryVersionSummary,
+  type TrajectorySummary
 } from "./artifacts.js";
 import {
   defaultWeights,
@@ -240,13 +241,16 @@ async function validateTaskCommand(args: CliArgs): Promise<void> {
 async function runOneCommand(args: CliArgs): Promise<void> {
   const rootDir = process.cwd();
   const configPath = resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml"));
-  const config = await loadMatrixConfig(configPath);
+  const loadedConfig = await loadMatrixConfig(configPath);
+  const config = booleanOption(args, "no-repair", false) ? { ...loadedConfig, maxRepairAttempts: 0 } : loadedConfig;
+  if (config.runsPerCell > 3) throw new Error("R2 lifecycle experiments allow at most three trajectories per arm.");
   const dryRun = booleanOption(args, "dry-run", false);
   const mockOpenCode = booleanOption(args, "mock-opencode", false);
   const runType = readRunType(args, mockOpenCode);
   const useMockOpenCode = mockOpenCode || runType === "mock";
   const mockProfile = stringOption(args, "mock-profile", "happy");
   const clarificationAnswer = optionalStringOption(args, "clarification-answer");
+  const interventionsPath = optionalStringOption(args, "interventions");
   const requestedVersions = numberOption(args, "versions", 0);
   const skipInstall = booleanOption(args, "skip-install", false);
   const selectedBase = selectTrajectory(config, args);
@@ -273,6 +277,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
   });
   const runDir = execution.rootPath;
   const trajectoryArtifactsPath = path.join(runDir, "artifacts", selected.trajectoryId);
+  const manualInterventions = interventionsPath ? await loadManualInterventions(resolveFromRoot(rootDir, interventionsPath), trajectoryArtifactsPath) : [];
   const artifactsPath = path.join(runDir, "artifacts", selected.trajectoryId, "v0");
   const logger = new EventLogger(runDir, config.id);
   const startedAt = new Date().toISOString();
@@ -332,7 +337,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       ...(clarificationAnswer ? { clarificationAnswer } : {})
     });
   } catch (error) {
-    await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath, metadata, versionId: "v0", error });
+    await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath, metadata, versionId: "v0", error, matrixChildResume });
     throw error;
   }
 
@@ -391,7 +396,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         promptPath: compiled.promptPath
       }
     });
-    await finalizeExecution(execution, "completed");
+    await finalizeRunOneExecution(execution, "completed", matrixChildResume);
     return;
   }
 
@@ -461,7 +466,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       trajectoryArtifactsPath,
       buildTrajectorySummary({ trajectory: selected, runType, versionsRequested: editVersions, versions: versionSummaries, totalLatencyMs })
     );
-    await finalizeExecution(execution, "failed");
+    await finalizeRunOneExecution(execution, "failed", matrixChildResume);
     throw new Error(`OpenCode failed with exit code ${opencode.exitCode}`);
   }
 
@@ -475,7 +480,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       skipInstall
     });
   } catch (error) {
-    await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath, metadata, versionId: "v0", error });
+    await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath, metadata, versionId: "v0", error, matrixChildResume });
     throw error;
   }
   let failureSummary = buildFailureSummary(evalResult);
@@ -514,7 +519,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
       preflightUsage: v0Preparation.preflightUsage,
       clarificationUsage: v0Preparation.clarificationUsage,
       repairUsage: v0Repair?.usage ?? [],
-      feedbackEvents: v0Preparation.feedbackEvents
+      feedbackEvents: [...v0Preparation.feedbackEvents, ...manualInterventionsForVersion(manualInterventions, "v0")]
     })
   );
   metadata = {
@@ -564,7 +569,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
 
   if (evalResult.status === "failed") {
     process.exitCode = 1;
-    await finalizeExecution(execution, "failed");
+    await finalizeRunOneExecution(execution, "failed", matrixChildResume);
     return;
   }
 
@@ -610,7 +615,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         ...(clarificationAnswer ? { clarificationAnswer } : {})
       });
     } catch (error) {
-      await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath: editArtifactsPath, metadata: editMetadata, versionId, error });
+      await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath: editArtifactsPath, metadata: editMetadata, versionId, error, matrixChildResume });
       throw error;
     }
 
@@ -669,7 +674,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         trajectoryArtifactsPath,
         buildTrajectorySummary({ trajectory: selected, runType, versionsRequested: editVersions, versions: versionSummaries, totalLatencyMs })
       );
-      await finalizeExecution(execution, "failed");
+      await finalizeRunOneExecution(execution, "failed", matrixChildResume);
       throw new Error(`OpenCode failed for ${versionId} with exit code ${editOpenCode.exitCode}`);
     }
 
@@ -684,7 +689,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         skipInstall
       });
     } catch (error) {
-      await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath: editArtifactsPath, metadata: editMetadata, versionId, error });
+      await finalizeUnhandledVersion({ execution, trajectory: selected, runType, editVersions, versionSummaries, totalLatencyMs, trajectoryArtifactsPath, artifactsPath: editArtifactsPath, metadata: editMetadata, versionId, error, matrixChildResume });
       throw error;
     }
     let editFailureSummary = buildFailureSummary(editEvalResult);
@@ -723,7 +728,7 @@ async function runOneCommand(args: CliArgs): Promise<void> {
         preflightUsage: editPreparation.preflightUsage,
         clarificationUsage: editPreparation.clarificationUsage,
         repairUsage: editRepair?.usage ?? [],
-        feedbackEvents: editPreparation.feedbackEvents
+        feedbackEvents: [...editPreparation.feedbackEvents, ...manualInterventionsForVersion(manualInterventions, versionId)]
       })
     );
     editMetadata = {
@@ -775,11 +780,19 @@ async function runOneCommand(args: CliArgs): Promise<void> {
     previousFailureMessages = editFailureSummary.messages;
     if (editEvalResult.status === "failed") {
       process.exitCode = 1;
-      await finalizeExecution(execution, "failed");
+      await finalizeRunOneExecution(execution, "failed", matrixChildResume);
       return;
     }
   }
-  await finalizeExecution(execution, "completed");
+  await finalizeRunOneExecution(execution, "completed", matrixChildResume);
+}
+
+async function finalizeRunOneExecution(
+  execution: Awaited<ReturnType<typeof createOrResumeExecution>>,
+  status: "completed" | "failed",
+  matrixChildResume: boolean
+): Promise<void> {
+  if (!matrixChildResume) await finalizeExecution(execution, status);
 }
 
 async function buildVersionSummary(options: {
@@ -807,6 +820,11 @@ async function buildVersionSummary(options: {
     repair_success: options.repairSuccess ?? false,
     loc_total: options.evaluation.metrics.code_health.loc_total,
     largest_file_loc: options.evaluation.metrics.code_health.largest_file.loc,
+    code_health: {
+      duplicate_ratio: options.evaluation.metrics.code_health.duplicate_ratio,
+      dependency_cycles: options.evaluation.metrics.code_health.dependency_cycles,
+      max_cyclomatic_complexity: options.evaluation.metrics.code_health.max_cyclomatic_complexity
+    },
     diff: await readDiffMetrics(path.join(options.artifactsPath, "git.diff")),
     generation_usage: options.generationUsage,
     preflight_usage: options.preflightUsage ?? [],
@@ -875,7 +893,7 @@ async function prepareImplementationAfterPreflight(options: {
       return { prompt: preparedPrompt, preflightUsage, clarificationUsage, feedbackEvents };
     }
     if (preflight.decision.decision !== "clarify") {
-      throw new Error(`Requirements preflight for ${options.versionId} returned ${preflight.decision.decision}: ${preflight.decision.reason}`);
+      throw new PreflightOpenCodeError(options.versionId, preflight.decision.decision, preflight.decision.reason);
     }
     if (round >= options.config.clarification.maxRounds) {
       throw new ClarificationLimitReachedError(options.versionId);
@@ -912,6 +930,61 @@ type PreparedImplementation = {
   feedbackEvents: FeedbackEvent[];
 };
 
+type ManualIntervention = {
+  version_id: string;
+  artifact_line: number;
+  kind: "human_prompt_correction" | "human_acceptance_correction" | "human_code_edit";
+  text: string;
+  manual_files_changed?: number;
+  manual_lines_added?: number;
+  manual_lines_deleted?: number;
+};
+
+async function loadManualInterventions(sourcePath: string, trajectoryArtifactsPath: string): Promise<ManualIntervention[]> {
+  const lines = (await readFile(sourcePath, "utf8")).split(/\r?\n/).filter((line) => line.trim());
+  const interventions = lines.map((line, index) => {
+    let value: unknown;
+    try { value = JSON.parse(line); } catch { throw new Error(`Invalid interventions JSONL at line ${index + 1}`); }
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid intervention at line ${index + 1}`);
+    const item = value as Record<string, unknown>;
+    const versionId = typeof item.version_id === "string" ? item.version_id : "";
+    const kind = item.kind;
+    const text = typeof item.text === "string" ? item.text : "";
+    if (!/^v\d+$/.test(versionId) || (kind !== "human_prompt_correction" && kind !== "human_acceptance_correction" && kind !== "human_code_edit") || !text.trim()) {
+      throw new Error(`Intervention at line ${index + 1} requires version_id, supported kind, and text.`);
+    }
+    const numberField = (field: "manual_files_changed" | "manual_lines_added" | "manual_lines_deleted"): number | undefined => {
+      const candidate = item[field];
+      if (candidate === undefined) return undefined;
+      if (typeof candidate !== "number" || !Number.isInteger(candidate) || candidate < 0) throw new Error(`Intervention at line ${index + 1} has invalid ${field}.`);
+      return candidate;
+    };
+    if (kind !== "human_code_edit" && ["manual_files_changed", "manual_lines_added", "manual_lines_deleted"].some((field) => item[field] !== undefined)) {
+      throw new Error(`Only human_code_edit may include manual diff counters (line ${index + 1}).`);
+    }
+    const manualFilesChanged = numberField("manual_files_changed");
+    const manualLinesAdded = numberField("manual_lines_added");
+    const manualLinesDeleted = numberField("manual_lines_deleted");
+    return { version_id: versionId, artifact_line: index + 1, kind: kind as ManualIntervention["kind"], text, ...(manualFilesChanged === undefined ? {} : { manual_files_changed: manualFilesChanged }), ...(manualLinesAdded === undefined ? {} : { manual_lines_added: manualLinesAdded }), ...(manualLinesDeleted === undefined ? {} : { manual_lines_deleted: manualLinesDeleted }) };
+  });
+  await ensureDir(trajectoryArtifactsPath);
+  await writeFile(path.join(trajectoryArtifactsPath, "manual-interventions.jsonl"), lines.join("\n") + (lines.length ? "\n" : ""), "utf8");
+  return interventions;
+}
+
+function manualInterventionsForVersion(interventions: ManualIntervention[], versionId: string): FeedbackEvent[] {
+  return interventions.filter((item) => item.version_id === versionId).map((item) => ({
+    kind: item.kind,
+    automatic: false,
+    source: item.kind,
+    round: null,
+    question_count: 0,
+    answer_words: item.text.trim().split(/\s+/).length,
+    ...(item.kind === "human_code_edit" ? { manual_files_changed: item.manual_files_changed ?? 0, manual_lines_added: item.manual_lines_added ?? 0, manual_lines_deleted: item.manual_lines_deleted ?? 0 } : {}),
+    artifacts_path: `manual-interventions.jsonl#${item.artifact_line}`
+  }));
+}
+
 class ClarificationLimitReachedError extends Error {
   constructor(versionId: string) {
     super(`Clarification limit reached for ${versionId}`);
@@ -935,25 +1008,36 @@ async function finalizeUnhandledVersion(options: {
   metadata: RunMetadata;
   versionId: string;
   error: unknown;
+  matrixChildResume: boolean;
 }): Promise<void> {
   const message = options.error instanceof Error ? options.error.message : String(options.error);
   const clarificationLimitReached = options.error instanceof ClarificationLimitReachedError;
+  const preflightOpenCodeFailed = options.error instanceof PreflightOpenCodeError;
+  const classification = clarificationLimitReached ? "model_failure" as const : preflightOpenCodeFailed ? "opencode_failure" as const : "harness_failure" as const;
+  const failedPhase = clarificationLimitReached ? "clarification_limit_reached" : preflightOpenCodeFailed ? "preflight" : "evaluation_running";
   const failure = {
     status: "failed" as const,
-    classification: clarificationLimitReached ? "model_failure" as const : "harness_failure" as const,
-    failed_phase: clarificationLimitReached ? "clarification_limit_reached" : "evaluation_running",
-    failed_checks: [clarificationLimitReached ? "clarification_limit_reached" : "evaluation_running"],
+    classification,
+    failed_phase: failedPhase,
+    failed_checks: [failedPhase],
     infra_suspected: false,
     messages: [message],
     artifact_paths: {}
   };
   await writeFailureSummary(options.artifactsPath, failure);
-  const metadata = { ...options.metadata, completed_at: new Date().toISOString(), status: "failed" as const, failure_classification: clarificationLimitReached ? "model_failure" as const : "harness_failure" as const };
+  const metadata = { ...options.metadata, completed_at: new Date().toISOString(), status: "failed" as const, failure_classification: classification };
   await writeRunMetadata(options.artifactsPath, metadata);
   await writeTerminalRunReport({ artifactsPath: options.artifactsPath, metadata, failureSummary: failure });
-  options.versionSummaries.push(await buildTerminalVersionSummary({ versionId: options.versionId, classification: clarificationLimitReached ? "model_failure" : "harness_failure", failedPhase: clarificationLimitReached ? "clarification_limit_reached" : "evaluation_running", artifactsPath: options.artifactsPath, generationUsage: unavailableAgentUsage() }));
+  options.versionSummaries.push(await buildTerminalVersionSummary({ versionId: options.versionId, classification, failedPhase, artifactsPath: options.artifactsPath, generationUsage: unavailableAgentUsage() }));
   await writeTrajectoryArtifacts(options.trajectoryArtifactsPath, buildTrajectorySummary({ trajectory: options.trajectory, runType: options.runType, versionsRequested: options.editVersions, versions: options.versionSummaries, totalLatencyMs: options.totalLatencyMs }));
-  await finalizeExecution(options.execution, "failed");
+  await finalizeRunOneExecution(options.execution, "failed", options.matrixChildResume);
+}
+
+class PreflightOpenCodeError extends Error {
+  constructor(versionId: string, decision: string, reason: string) {
+    super(`Requirements preflight for ${versionId} returned ${decision}: ${reason}`);
+    this.name = "PreflightOpenCodeError";
+  }
 }
 
 type RepairResult = {
@@ -1057,8 +1141,8 @@ async function maybeRepairVersion(options: {
   return { attempts: options.maxRepairAttempts, success: false, durationMs: totalDurationMs, usage: usages, ...lastResult };
 }
 
-function combineVersionUsage(generationUsage: AgentUsage, repairUsage: AgentUsage[]): AgentUsage {
-  const usages = [generationUsage, ...repairUsage];
+function combineVersionUsage(generationUsage: AgentUsage, phaseUsages: AgentUsage[]): AgentUsage {
+  const usages = [generationUsage, ...phaseUsages];
   if (usages.every((usage) => usage.status === "complete" && usage.totalTokens !== null)) {
     return {
       status: "complete",
@@ -1106,6 +1190,16 @@ async function runMockOpenCode(
     if (profile === "intentionally-broken") {
       await applyBrokenFixture(workspacePath);
     }
+    if (profile === "broken-due-dates" && evolutionStepIndex !== undefined) {
+      const mainPath = path.join(workspacePath, "src", "main.tsx");
+      const source = await readFile(mainPath, "utf8");
+      await writeFile(mainPath, source.replace(/<input id="due-date"[\s\S]*?\/>/, ""), "utf8");
+    }
+    if (profile === "broken-search" && evolutionStepIndex === 1) {
+      const mainPath = path.join(workspacePath, "src", "main.tsx");
+      const source = await readFile(mainPath, "utf8");
+      await writeFile(mainPath, source.replace('aria-label="Search"', 'aria-label="Unavailable"'), "utf8");
+    }
     if (profile === "build-fail-v2-repair-success" && evolutionStepIndex === 1 && repairAttempt < 2) {
       await writeFile(path.join(workspacePath, "src", "main.tsx"), "this is intentionally invalid TypeScript\n", "utf8");
     }
@@ -1134,11 +1228,14 @@ async function runMockOpenCode(
   const assistantResponsePath = path.join(artifactsPath, "assistant-response.md");
   await writeFile(resultPath, JSON.stringify(parsed, null, 2), "utf8");
   await writeFile(assistantResponsePath, parsed.assistantText, "utf8");
-  await writeFile(path.join(artifactsPath, "opencode-attempts.json"), JSON.stringify({ max_attempts: 1, attempts: [{ attempt: 1, ok: !fail, durationMs: Date.now() - startedAt, artifactsPath }] }, null, 2), "utf8");
+  const completedAt = new Date().toISOString();
+  await writeFile(path.join(artifactsPath, "opencode-attempts.json"), JSON.stringify({ max_attempts: 1, attempts: [{ attempt: 1, ok: !fail, durationMs: Date.now() - startedAt, artifactsPath, exitCode: fail ? null : 0, startedAt: new Date(startedAt).toISOString(), endedAt: completedAt, terminalStatus: null, usage: parsed.usage }] }, null, 2), "utf8");
   return {
     ok: !fail,
     exitCode: fail ? null : 0,
     durationMs: Date.now() - startedAt,
+    startedAt: new Date(startedAt).toISOString(),
+    endedAt: completedAt,
     stdoutPath: path.join(artifactsPath, "opencode.stdout.log"),
     stderrPath: path.join(artifactsPath, "opencode.stderr.log"),
     eventsPath,
@@ -1154,8 +1251,14 @@ async function runMockOpenCode(
       sessionId: "mock",
       continuedSessionId: null,
       continuationFallback: false,
-      failureClassification: fail ? "technical_interruption" : "none"
+      failureClassification: fail ? "technical_interruption" : "none",
+      exitCode: fail ? null : 0,
+      startedAt: new Date(startedAt).toISOString(),
+      endedAt: completedAt,
+      terminalStatus: null,
+      usage: parsed.usage
     }],
+    failureClassification: fail ? "technical_interruption" : "none",
     ...(fail ? { error: profile === "timeout-v0" ? `Timed out after mock profile ${profile}` : `mock profile ${profile} failed ${versionId}` } : {})
   };
 }
@@ -1327,9 +1430,10 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
   const configPath = resolveFromRoot(rootDir, configOption);
   const dryRun = booleanOption(args, "dry-run", false);
   const config = await loadMatrixConfig(configPath);
+  if (config.runsPerCell > 3) throw new Error("R2 lifecycle experiments allow at most three trajectories per arm.");
   const matrixRoot = path.join(rootDir, config.outputDir, config.id);
   const maxTrajectories = optionalNumberOption(args, "max-trajectories");
-  const requestedVersions = optionalNumberOption(args, "versions") ?? (dryRun ? config.maxVersions : 0);
+  const requestedVersions = optionalNumberOption(args, "versions") ?? config.maxVersions;
   const runType = readRunType(args, booleanOption(args, "mock-opencode", false));
   const mockProfile = stringOption(args, "mock-profile", "happy");
   const skipInstall = booleanOption(args, "skip-install", false);
@@ -1400,7 +1504,11 @@ async function runMatrixCommand(args: CliArgs): Promise<void> {
       resume
     });
     const aggregate = await aggregateRun(runDir);
-    await finalizeExecution(execution, result.failed === 0 ? "completed" : "failed");
+    // A matrix execution is complete once its controller has exhausted the
+    // scheduled trajectories. Individual trajectory failures are preserved in
+    // the controller manifest and aggregate; they must not invalidate results
+    // from a later first-success trajectory in the same execution.
+    await finalizeExecution(execution, "completed");
     await logger.write({
       level: result.failed === 0 ? "info" : "warn",
       phase: "run_matrix",
@@ -1444,13 +1552,40 @@ async function executeMatrix(options: {
   skipInstall: boolean;
   resume: boolean;
 }): Promise<{ passed: number; failed: number; skipped: number }> {
+  type ControllerEntry = {
+    trajectory_id: string;
+    arm_id: string;
+    scheduled_index: number;
+    status: "pending" | "running" | "passed" | "failed" | "resumed" | "skipped_after_first_success";
+    started_at: string | null;
+    completed_at: string | null;
+    first_success_trajectory_id: string | null;
+  };
+  const armId = (trajectory: TrajectoryPlan): string => [trajectory.taskId, trajectory.modelId, trajectory.systemPromptId, trajectory.userPromptId, trajectory.editPromptId].join("__");
+  const controllerPath = path.join(options.runDir, "experiment-manifest.json");
+  const controller: { schema_version: "0.1.0"; seed: number; max_trajectories_per_arm: number; entries: ControllerEntry[] } = {
+    schema_version: "0.1.0",
+    seed: options.config.seed,
+    max_trajectories_per_arm: options.config.runsPerCell,
+    entries: options.plan.map((trajectory, index) => ({ trajectory_id: trajectory.trajectoryId, arm_id: armId(trajectory), scheduled_index: index + 1, status: "pending", started_at: null, completed_at: null, first_success_trajectory_id: null }))
+  };
+  const successfulArms = new Map<string, string>();
+  for (const trajectory of options.plan) {
+    const summaryPath = path.join(options.runDir, "artifacts", trajectory.trajectoryId, "trajectory-summary.json");
+    if (!(await pathExists(summaryPath))) continue;
+    const summary = await readJsonFile<TrajectorySummary>(summaryPath);
+    if (summary.survived_versions >= options.requestedVersions && summary.first_failed_version === null) successfulArms.set(armId(trajectory), trajectory.trajectoryId);
+  }
+  const writeController = async (): Promise<void> => writeFile(controllerPath, JSON.stringify(controller, null, 2), "utf8");
+  await writeController();
   const state = {
     nextIndex: 0,
     passed: 0,
     failed: 0,
     skipped: 0
   };
-  const concurrency = Math.max(1, Math.min(options.config.concurrency, options.plan.length || 1));
+  // A first-success stopping rule must be serial within the scheduled order.
+  const concurrency = options.config.runsPerCell > 1 ? 1 : Math.max(1, Math.min(options.config.concurrency, options.plan.length || 1));
   await ensureDir(path.join(options.runDir, "matrix"));
 
   async function worker(): Promise<void> {
@@ -1462,13 +1597,30 @@ async function executeMatrix(options: {
         continue;
       }
       const summaryPath = path.join(options.runDir, "artifacts", trajectory.trajectoryId, "trajectory-summary.json");
+      const entry = controller.entries[index]!;
+      const priorSuccess = successfulArms.get(armId(trajectory));
+      if (priorSuccess) {
+        entry.status = "skipped_after_first_success";
+        entry.completed_at = new Date().toISOString();
+        entry.first_success_trajectory_id = priorSuccess;
+        await writeController();
+        state.skipped += 1;
+        console.log(`[${index + 1}/${options.plan.length}] skipped ${trajectory.trajectoryId}; arm already succeeded with ${priorSuccess}`);
+        continue;
+      }
       if (options.resume && (await pathExists(summaryPath))) {
+        entry.status = "resumed";
+        entry.completed_at = new Date().toISOString();
+        await writeController();
         state.skipped += 1;
         console.log(`[${index + 1}/${options.plan.length}] skipped existing ${trajectory.trajectoryId}`);
         continue;
       }
 
       console.log(`[${index + 1}/${options.plan.length}] running ${trajectory.trajectoryId}`);
+      entry.status = "running";
+      entry.started_at = new Date().toISOString();
+      await writeController();
       const logPath = path.join(options.runDir, "matrix", `${trajectory.trajectoryId}.log`);
       const commandArgs = [
         "--import",
@@ -1506,9 +1658,18 @@ async function executeMatrix(options: {
       const result = await runCommand(process.execPath, commandArgs, options.rootDir, logPath, 60 * 60 * 1000);
       if (result.exitCode === 0) {
         state.passed += 1;
+        entry.status = "passed";
+        const summary = await readJsonFile<TrajectorySummary>(summaryPath).catch(() => null);
+        if (summary && summary.survived_versions >= options.requestedVersions && summary.first_failed_version === null) {
+          successfulArms.set(armId(trajectory), trajectory.trajectoryId);
+          entry.first_success_trajectory_id = trajectory.trajectoryId;
+        }
       } else {
         state.failed += 1;
+        entry.status = "failed";
       }
+      entry.completed_at = new Date().toISOString();
+      await writeController();
     }
   }
 
@@ -1551,9 +1712,12 @@ async function reportExperimentCommand(args: CliArgs): Promise<void> {
   if (!experimentId || executionIds.length === 0) throw new Error("report-experiment requires --id and --executions");
   const matrixRoot = path.join(rootDir, config.outputDir, config.id);
   const attempts: Array<{ executionId: string; manifest: ExecutionManifest; summary: import("./artifacts.js").TrajectorySummary }> = [];
+  const controllerManifests: Array<{ execution_id: string; manifest: unknown | null }> = [];
   for (const executionId of executionIds) {
     const executionPath = path.join(matrixRoot, "executions", executionId);
     const manifest = await readJsonFile<ExecutionManifest>(path.join(executionPath, "execution-manifest.json"));
+    const controllerPath = path.join(executionPath, "experiment-manifest.json");
+    controllerManifests.push({ execution_id: executionId, manifest: await readJsonFile<unknown>(controllerPath).catch(() => null) });
     for (const entry of await readdir(path.join(executionPath, "artifacts"), { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const summaryPath = path.join(executionPath, "artifacts", entry.name, "trajectory-summary.json");
@@ -1562,7 +1726,12 @@ async function reportExperimentCommand(args: CliArgs): Promise<void> {
   }
   const realAttempts = attempts.filter((item) => item.summary.run_type === "real");
   const commits = new Set(realAttempts.map((item) => item.manifest.source_commit));
-  const compatible = realAttempts.every((item) => !item.manifest.repo_dirty && item.manifest.eligible_for_published_results) && commits.size <= 1;
+  const compatibilityFields: Array<keyof ExecutionManifest> = ["source_commit", "runner_source_hash", "config_hash", "task_hashes", "prompt_hashes", "scaffold_hash", "requested_versions", "lifecycle_limits"];
+  const baseline = realAttempts[0]?.manifest;
+  const compatibilityMismatches = baseline
+    ? realAttempts.flatMap((item) => compatibilityFields.filter((field) => JSON.stringify(item.manifest[field]) !== JSON.stringify(baseline[field])).map((field) => ({ execution_id: item.executionId, field })))
+    : [];
+  const compatible = realAttempts.length > 0 && realAttempts.every((item) => !item.manifest.repo_dirty && item.manifest.eligible_for_published_results) && compatibilityMismatches.length === 0;
   const selected = new Map<string, typeof attempts[number]>();
   for (const arm of ["U3-semantic-ui", "U5-maintainable"]) {
     const success = attempts
@@ -1601,9 +1770,11 @@ async function reportExperimentCommand(args: CliArgs): Promise<void> {
     experiment_id: experimentId,
     method: "First successful real v0-to-v2 trajectory per prompt arm; no statistical superiority claim.",
     compatible_baseline: compatible,
+    compatibility_mismatches: compatibilityMismatches,
     tested_runner_commit: commits.size === 1 ? [...commits][0] : null,
-    selected_cases: Object.fromEntries([...selected.entries()].map(([arm, item]) => [arm, { execution_id: item.executionId, trajectory_id: item.summary.trajectory_id, versions: item.summary.versions, lifecycle_usage: item.summary.lifecycle_usage, required_supervision: item.summary.required_supervision, actual_human_activity: item.summary.actual_human_activity }])),
+    selected_cases: Object.fromEntries([...selected.entries()].map(([arm, item]) => [arm, { execution_id: item.executionId, trajectory_id: item.summary.trajectory_id, versions: item.summary.versions.map((version) => ({ ...version, artifacts_path: path.relative(rootDir, version.artifacts_path) })), lifecycle_usage: item.summary.lifecycle_usage, required_supervision: item.summary.required_supervision, actual_human_activity: item.summary.actual_human_activity }])),
     attempts: attempts.map(attemptRecord)
+    ,experiment_manifests: controllerManifests
   };
   await writeFile(path.join(outDir, "comparison.json"), JSON.stringify(comparison, null, 2), "utf8");
   const csvRows = [["execution_id", "trajectory_id", "arm", "run_type", "status", "source_commit", "repo_dirty", "eligible", "first_failed_version", "survived_versions", "repair_attempts", "lifecycle_tokens", "non_cache_tokens", "cache_read_tokens", "clarification_rounds", "clarification_questions", "human_answers", "human_answer_words", "human_prompt_corrections", "human_acceptance_corrections", "human_code_edits", "failure_classes"]];
@@ -1612,7 +1783,7 @@ async function reportExperimentCommand(args: CliArgs): Promise<void> {
     csvRows.push([item.executionId, item.summary.trajectory_id, item.summary.user_prompt_id, item.summary.run_type, item.manifest.status, item.manifest.source_commit ?? "", String(item.manifest.repo_dirty), String(item.manifest.eligible_for_published_results), item.summary.first_failed_version ?? "", String(item.summary.survived_versions), String(item.summary.repair_attempts_total), numberText(usage.totalTokens), numberText(nonCacheTokens(usage)), numberText(usage.cacheReadTokens), String(item.summary.required_supervision.clarification_rounds), String(item.summary.required_supervision.questions_total), String(item.summary.actual_human_activity.human_answers_total), String(item.summary.actual_human_activity.human_answer_words), String(item.summary.actual_human_activity.human_prompt_corrections), String(item.summary.actual_human_activity.human_acceptance_corrections), String(item.summary.actual_human_activity.human_code_edits), item.summary.versions.map((version) => version.failure_classification).join("|")]);
   }
   await writeFile(path.join(outDir, "attempts.csv"), csvRows.map((row) => row.map((cell) => /[",\n]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell).join(",")).join("\n") + "\n", "utf8");
-  const markdown: string[] = ["# Observable Lifecycle Comparison", "", `Experiment: ${experimentId}`, "", "## Method", "", "First successful real v0-to-v2 case per prompt arm. This report is descriptive and does not claim statistical superiority.", "", "## Baseline", "", `- compatible: ${compatible}`, `- runner commit: ${commits.size === 1 ? [...commits][0] : "incompatible or unavailable"}`, ""];
+  const markdown: string[] = ["# Observable Lifecycle Comparison", "", `Experiment: ${experimentId}`, "", "## Method", "", "First successful real v0-to-v2 case per prompt arm. This report is descriptive and does not claim statistical superiority.", "", "## Baseline", "", `- compatible: ${compatible}`, `- runner commit: ${commits.size === 1 ? [...commits][0] : "incompatible or unavailable"}`, ...(compatibilityMismatches.length ? [`- mismatches: ${compatibilityMismatches.map((item) => `${item.execution_id}:${String(item.field)}`).join(", ")}`] : []), ""];
   for (const arm of ["U3-semantic-ui", "U5-maintainable"]) {
     const item = selected.get(arm);
     if (!item) {
@@ -1622,7 +1793,7 @@ async function reportExperimentCommand(args: CliArgs): Promise<void> {
     const summary = item.summary;
     const lifecycle = summary.lifecycle_usage;
     const lifecycleNonCache = nonCacheTokens(lifecycle);
-    markdown.push(`## ${arm}`, "", `- execution: ${item.executionId}`, `- trajectory: ${summary.trajectory_id}`, `- lifecycle tokens: ${numberText(lifecycle.totalTokens)} (${numberText(lifecycleNonCache)} non-cache; ${numberText(lifecycle.cacheReadTokens)} cache-read)`, `- repairs: ${summary.repair_attempts_total}`, "", "| Version | Status | Score | Total tokens | Delta tokens | Delta non-cache | Delta cache-read | LOC | Largest file LOC | Diff (+/-/files/rewrite) | Repairs | Feedback |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |");
+    markdown.push(`## ${arm}`, "", `- execution: ${item.executionId}`, `- trajectory: ${summary.trajectory_id}`, `- lifecycle tokens: ${numberText(lifecycle.totalTokens)} (${numberText(lifecycleNonCache)} non-cache; ${numberText(lifecycle.cacheReadTokens)} cache-read)`, `- repairs: ${summary.repair_attempts_total}`, "", "| Version | Status | Score | Total tokens | Delta tokens | Delta non-cache | Delta cache-read | LOC | Largest file LOC | Code health (duplicate/cycles/complexity) | Diff (+/-/files/rewrite) | Repairs | Feedback |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- |");
     let previousUsage: typeof summary.versions[number]["version_total_usage"] | undefined;
     for (const version of summary.versions) {
       const usage = version.version_total_usage;
@@ -1630,7 +1801,8 @@ async function reportExperimentCommand(args: CliArgs): Promise<void> {
       const previousNonCache = previousUsage ? nonCacheTokens(previousUsage) : undefined;
       const feedback = version.feedback_events.map((event) => `${event.kind}${event.round === null ? "" : `:${event.round}`}`).join(",") || "none";
       const diff = `${version.diff.lines_added}/${version.diff.lines_deleted}/${version.diff.files_touched}/${version.diff.rewrite_ratio.toFixed(3)}`;
-      markdown.push(`| ${version.version_id} | ${version.status} | ${version.score === null ? "unavailable" : version.score.toFixed(2)} | ${numberText(usage.totalTokens)} | ${previousUsage ? deltaText(usage.totalTokens, previousUsage.totalTokens) : "0"} | ${previousUsage ? deltaText(nonCache, previousNonCache) : "0"} | ${previousUsage ? deltaText(usage.cacheReadTokens, previousUsage.cacheReadTokens) : "0"} | ${version.loc_total} | ${version.largest_file_loc} | ${diff} | ${version.repair_attempts} | ${feedback} |`);
+      const health = version.code_health ? `${numberText(version.code_health.duplicate_ratio)}/${numberText(version.code_health.dependency_cycles)}/${numberText(version.code_health.max_cyclomatic_complexity)}` : "unavailable";
+      markdown.push(`| ${version.version_id} | ${version.status} | ${version.score === null ? "unavailable" : version.score.toFixed(2)} | ${numberText(usage.totalTokens)} | ${previousUsage ? deltaText(usage.totalTokens, previousUsage.totalTokens) : "0"} | ${previousUsage ? deltaText(nonCache, previousNonCache) : "0"} | ${previousUsage ? deltaText(usage.cacheReadTokens, previousUsage.cacheReadTokens) : "0"} | ${version.loc_total} | ${version.largest_file_loc} | ${health} | ${diff} | ${version.repair_attempts} | ${feedback} |`);
       previousUsage = usage;
     }
     const supervision = summary.required_supervision;
@@ -2137,9 +2309,13 @@ async function checkCommand(
   optional = false
 ): Promise<{ label: string; ok: boolean; optional: boolean; output: string }> {
   const label = [command, ...args].join(" ");
+  const executable = process.platform === "win32" && command === "opencode" ? "powershell.exe" : command;
+  const executableArgs = process.platform === "win32" && command === "opencode"
+    ? ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "& opencode @args", "--", ...args]
+    : args;
 
   try {
-    const result = await execFileAsync(command, args, {
+    const result = await execFileAsync(executable, executableArgs, {
       timeout: 30000,
       cwd: process.cwd()
     });

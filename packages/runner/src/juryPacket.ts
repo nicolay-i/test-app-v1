@@ -3,6 +3,7 @@ import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { copyDirFiltered, ensureDir, pathExists } from "./fs.js";
+import { workspacePathForTrajectory } from "./workspace.js";
 import type { TrajectorySummary } from "./artifacts.js";
 
 const execFileAsync = promisify(execFile);
@@ -29,7 +30,7 @@ export async function exportJuryPacket(options: {
   const summary = JSON.parse(
     await readFile(path.join(trajectoryArtifactsPath, "trajectory-summary.json"), "utf8")
   ) as TrajectorySummary;
-  const workspacePath = path.join(options.runDir, "workspaces", options.trajectoryId);
+  const workspacePath = await workspacePathForTrajectory(options.runDir, options.trajectoryId);
   await ensureDir(options.outPath);
   await ensureDir(path.join(options.outPath, "diffs"));
   await ensureDir(path.join(options.outPath, "screenshots"));

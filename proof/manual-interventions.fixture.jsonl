@@ -1,0 +1,3 @@
+{"version_id":"v0","kind":"human_prompt_correction","text":"Use only semantic selectors in the acceptance flow."}
+{"version_id":"v1","kind":"human_acceptance_correction","text":"An overdue active task must have a visible distinct treatment."}
+{"version_id":"v2","kind":"human_code_edit","text":"Human corrected the migration edge case.","manual_files_changed":2,"manual_lines_added":8,"manual_lines_deleted":3}

@@ -24,6 +24,8 @@ export type ParsedOpenCodeResult = {
   malformedLines: number;
   unknownEventTypes: string[];
   streamStatus: "complete" | "partial" | "invalid";
+  /** Individual model steps, retained to deduplicate same-session continuations. */
+  stepUsageParts: Array<{ partId: string; usage: AgentUsage }>;
 };
 
 const unavailableUsage = (): AgentUsage => ({
@@ -51,6 +53,7 @@ export function parseOpenCodeEvents(stream: string): ParsedOpenCodeResult {
   let fallbackUsage = unavailableUsage();
   const stepUsage = emptyStepUsage();
   const seenStepPartIds = new Set<string>();
+  const stepUsageParts: ParsedOpenCodeResult["stepUsageParts"] = [];
 
   for (const line of stream.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -80,6 +83,7 @@ export function parseOpenCodeEvents(stream: string): ParsedOpenCodeResult {
     if (step && !seenStepPartIds.has(step.partId)) {
       seenStepPartIds.add(step.partId);
       addStepUsage(stepUsage, step);
+      stepUsageParts.push({ partId: step.partId, usage: usageForStep(step) });
     }
     const eventUsage = findUsage(event);
     if (eventUsage) fallbackUsage = mergeUsage(fallbackUsage, eventUsage);
@@ -94,6 +98,7 @@ export function parseOpenCodeEvents(stream: string): ParsedOpenCodeResult {
     malformedLines,
     unknownEventTypes: [...unknown].sort(),
     streamStatus: parsedEvents === 0 ? "invalid" : malformedLines > 0 ? "partial" : "complete"
+    ,stepUsageParts
   };
 }
 
@@ -166,6 +171,21 @@ function finalizeStepUsage(usage: StepUsage): AgentUsage {
     cacheWriteTokens: usage.cacheWriteTokens,
     totalTokens: usage.inputTokens + usage.outputTokens + usage.reasoningTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
     reportedCost: usage.reportedCost,
+    currency: null,
+    source: "events"
+  };
+}
+
+function usageForStep(step: ParsedStepUsage): AgentUsage {
+  return {
+    status: "complete",
+    inputTokens: step.inputTokens,
+    outputTokens: step.outputTokens,
+    reasoningTokens: step.reasoningTokens,
+    cacheReadTokens: step.cacheReadTokens,
+    cacheWriteTokens: step.cacheWriteTokens,
+    totalTokens: step.inputTokens + step.outputTokens + step.reasoningTokens + step.cacheReadTokens + step.cacheWriteTokens,
+    reportedCost: step.reportedCost,
     currency: null,
     source: "events"
   };

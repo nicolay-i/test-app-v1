@@ -15,3 +15,11 @@ tests:
     requirements: [semantic-ui]
     observableBehavior: true
     implementationAssumptions: [TodoMVC heading]
+  evolution/01-due-dates.spec.ts:due-dates:
+    requirements: [due-dates, overdue-behavior, due-date-persistence]
+    observableBehavior: true
+    implementationAssumptions: []
+  evolution/02-search.spec.ts:search:
+    requirements: [search-by-title, search-with-filters, search-without-mutation]
+    observableBehavior: true
+    implementationAssumptions: []

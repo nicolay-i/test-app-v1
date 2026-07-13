@@ -19,8 +19,8 @@ scaffold:
   path: scaffolds/vite-react-ts
 
 models:
-  - id: deepseek-v4-flash-free
-    providerModel: opencode/deepseek-v4-flash-free
+  - id: deepseek-v4-flash
+    providerModel: opencode-go/deepseek-v4-flash
 
 tasks:
   - todomvc

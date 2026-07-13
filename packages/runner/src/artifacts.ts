@@ -55,12 +55,15 @@ export type DiffMetrics = {
 };
 
 export type FeedbackEvent = {
-  kind: "preflight" | "clarification" | "repair" | "continuation";
+  kind: "preflight" | "clarification" | "repair" | "continuation" | "human_prompt_correction" | "human_acceptance_correction" | "human_code_edit";
   automatic: boolean;
   source: "none" | "oracle_answer" | "scenario_answer" | "human_answer" | "human_prompt_correction" | "human_acceptance_correction" | "human_code_edit";
   round: number | null;
   question_count: number;
   answer_words: number;
+  manual_files_changed?: number;
+  manual_lines_added?: number;
+  manual_lines_deleted?: number;
   artifacts_path: string;
 };
 
@@ -76,6 +79,11 @@ export type TrajectoryVersionSummary = {
   repair_success: boolean;
   loc_total: number | null;
   largest_file_loc: number | null;
+  code_health: {
+    duplicate_ratio: number | null;
+    dependency_cycles: number | null;
+    max_cyclomatic_complexity: number | null;
+  };
   diff: DiffMetrics;
   generation_usage: AgentUsage;
   preflight_usage: AgentUsage[];
@@ -353,6 +361,7 @@ export async function buildTerminalVersionSummary(options: {
     repair_success: false,
     loc_total: null,
     largest_file_loc: null,
+    code_health: { duplicate_ratio: null, dependency_cycles: null, max_cyclomatic_complexity: null },
     diff: await readDiffMetrics(path.join(options.artifactsPath, "git.diff")),
     generation_usage: generationUsage,
     preflight_usage: [],
@@ -427,6 +436,9 @@ export function buildTrajectorySummary(options: {
   const repairUsage = aggregateUsage(options.versions.flatMap((version) => version.repair_usage));
   const clarificationEvents = options.versions.flatMap((version) => version.feedback_events.filter((event) => event.kind === "clarification"));
   const humanEvents = options.versions.flatMap((version) => version.feedback_events.filter((event) => event.source === "human_answer"));
+  const promptCorrections = options.versions.flatMap((version) => version.feedback_events.filter((event) => event.source === "human_prompt_correction"));
+  const acceptanceCorrections = options.versions.flatMap((version) => version.feedback_events.filter((event) => event.source === "human_acceptance_correction"));
+  const codeEdits = options.versions.flatMap((version) => version.feedback_events.filter((event) => event.source === "human_code_edit"));
 
   return {
     schema_version: "0.1.0",
@@ -479,12 +491,12 @@ export function buildTrajectorySummary(options: {
     actual_human_activity: {
       human_answers_total: humanEvents.length,
       human_answer_words: humanEvents.reduce((total, event) => total + event.answer_words, 0),
-      human_prompt_corrections: 0,
-      human_acceptance_corrections: 0,
-      human_code_edits: 0,
-      manual_files_changed: 0,
-      manual_lines_added: 0,
-      manual_lines_deleted: 0
+      human_prompt_corrections: promptCorrections.length,
+      human_acceptance_corrections: acceptanceCorrections.length,
+      human_code_edits: codeEdits.length,
+      manual_files_changed: codeEdits.reduce((total, event) => total + (event.manual_files_changed ?? 0), 0),
+      manual_lines_added: codeEdits.reduce((total, event) => total + (event.manual_lines_added ?? 0), 0),
+      manual_lines_deleted: codeEdits.reduce((total, event) => total + (event.manual_lines_deleted ?? 0), 0)
     },
     versions: options.versions
   };

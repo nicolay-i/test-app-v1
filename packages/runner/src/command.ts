@@ -28,6 +28,13 @@ export async function runCommand(
   await ensureDir(path.dirname(logPath));
 
   const exitCode = await new Promise<number | null>((resolve) => {
+    let settled = false;
+    const finish = (code: number | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(code);
+    };
     const child = spawn(command, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -38,7 +45,11 @@ export async function runCommand(
     });
 
     const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
+      stderr += `\nTimed out after ${timeoutMs}ms\n`;
+      terminateProcessTree(child);
+      // On Windows a killed pnpm.cmd may never emit close. The evaluator must
+      // still return a classified timeout rather than hang forever.
+      finish(null);
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -51,13 +62,11 @@ export async function runCommand(
 
     child.on("error", (error) => {
       stderr += `${error.message}\n`;
-      clearTimeout(timeout);
-      resolve(null);
+      finish(null);
     });
 
     child.on("close", (code) => {
-      clearTimeout(timeout);
-      resolve(code);
+      finish(code);
     });
   });
 
@@ -88,4 +97,16 @@ export async function runCommand(
     stderr,
     logPath
   };
+}
+
+function terminateProcessTree(child: ReturnType<typeof spawn>): void {
+  if (!child.pid) return;
+  if (process.platform !== "win32") {
+    child.kill("SIGTERM");
+    return;
+  }
+  // pnpm.cmd spawns nested cmd/node processes. Killing only the launcher leaves
+  // installs running forever and prevents the command's close event.
+  const taskkill = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+  taskkill.once("error", () => child.kill("SIGTERM"));
 }

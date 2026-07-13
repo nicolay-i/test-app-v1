@@ -8,8 +8,8 @@
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty",
     "lint": "tsc -b --pretty",
-    "proof:mock": "bash scripts/proof-mock.sh",
-    "proof:fairness": "bash scripts/proof-fairness.sh"
+    "proof:mock": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/proof-mock.ps1",
+    "proof:fairness": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/proof-fairness.ps1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

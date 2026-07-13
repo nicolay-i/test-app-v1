@@ -27,6 +27,12 @@ export type ExecutionManifest = {
   reproducible_from_commit_only: boolean;
   eligible_for_published_results: boolean;
   requested_versions: number;
+  lifecycle_limits: {
+    max_attempts: number;
+    max_continuations: number;
+    max_repairs: number;
+    max_clarification_rounds: number;
+  };
   mock_profile: string | null;
   trajectory_ids: string[];
   node_version: string;
@@ -116,6 +122,12 @@ async function buildManifest(options: Omit<Parameters<typeof createOrResumeExecu
     reproducible_from_commit_only: !repoDirty,
     eligible_for_published_results: options.runType === "real" && !repoDirty,
     requested_versions: options.requestedVersions,
+    lifecycle_limits: {
+      max_attempts: options.config.opencode.maxAttempts,
+      max_continuations: options.config.opencode.maxContinuations,
+      max_repairs: options.config.maxRepairAttempts,
+      max_clarification_rounds: options.config.clarification.maxRounds
+    },
     mock_profile: options.mockProfile,
     trajectory_ids: options.trajectories.map((item) => item.trajectoryId).sort(),
     node_version: process.version,
@@ -130,7 +142,7 @@ async function buildManifest(options: Omit<Parameters<typeof createOrResumeExecu
 function assertResumeCompatible(actual: ExecutionManifest, expected: ExecutionManifest, allowTrajectorySubset: boolean): void {
   const fields: Array<keyof ExecutionManifest> = [
     "run_type", "matrix_id", "source_commit", "repo_dirty", "runner_source_hash", "package_json_hash", "lockfile_hash",
-    "config_hash", "scaffold_hash", "working_tree_patch_sha256", "requested_versions", "mock_profile"
+    "config_hash", "scaffold_hash", "working_tree_patch_sha256", "requested_versions", "lifecycle_limits", "mock_profile"
   ];
   for (const field of fields) if (JSON.stringify(actual[field]) !== JSON.stringify(expected[field])) throw new Error(`Cannot resume ${actual.execution_id}: ${field} differs`);
   for (const [task, hash] of Object.entries(expected.task_hashes)) if (actual.task_hashes[task] !== hash) throw new Error(`Cannot resume ${actual.execution_id}: task hash differs for ${task}`);
