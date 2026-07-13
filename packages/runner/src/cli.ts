@@ -9,7 +9,7 @@ import { aggregateRun, aggregateRuns } from "./aggregation.js";
 import { runCommand } from "./command.js";
 import { loadMatrixConfig } from "./config.js";
 import { EventLogger } from "./events.js";
-import { createOrResumeExecution, finalizeExecution } from "./execution.js";
+import { createOrResumeExecution, finalizeExecution, type ExecutionManifest } from "./execution.js";
 import { evaluateWorkspace, type EvaluationResult } from "./evaluator.js";
 import { copyDirFiltered, ensureDir, pathExists, resolveFromRoot, writeFileIfMissing } from "./fs.js";
 import { exportJuryPacket, importJuryReview, type JuryBlindMode } from "./juryPacket.js";
@@ -123,6 +123,9 @@ async function main(): Promise<void> {
         break;
       case "aggregate":
         await aggregateCommand(args);
+        break;
+      case "report-experiment":
+        await reportExperimentCommand(args);
         break;
       case "verify-run":
         await verifyRunCommand(args);
@@ -1521,6 +1524,58 @@ async function aggregateCommand(args: CliArgs): Promise<void> {
   console.log(`leaderboard: ${result.outputs.leaderboardMd}`);
 }
 
+async function reportExperimentCommand(args: CliArgs): Promise<void> {
+  const rootDir = process.cwd();
+  const config = await loadMatrixConfig(resolveFromRoot(rootDir, stringOption(args, "config", "configs/r2-ab-u3-vs-u5.yaml")));
+  const experimentId = stringOption(args, "id", "");
+  const executionIds = stringOption(args, "executions", "").split(",").map((value) => value.trim()).filter(Boolean);
+  if (!experimentId || executionIds.length === 0) throw new Error("report-experiment requires --id and --executions");
+  const matrixRoot = path.join(rootDir, config.outputDir, config.id);
+  const attempts: Array<{ executionId: string; manifest: ExecutionManifest; summary: import("./artifacts.js").TrajectorySummary }> = [];
+  for (const executionId of executionIds) {
+    const executionPath = path.join(matrixRoot, "executions", executionId);
+    const manifest = await readJsonFile<ExecutionManifest>(path.join(executionPath, "execution-manifest.json"));
+    for (const entry of await readdir(path.join(executionPath, "artifacts"), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const summaryPath = path.join(executionPath, "artifacts", entry.name, "trajectory-summary.json");
+      if (await pathExists(summaryPath)) attempts.push({ executionId, manifest, summary: await readJsonFile(summaryPath) });
+    }
+  }
+  const realAttempts = attempts.filter((item) => item.summary.run_type === "real");
+  const commits = new Set(realAttempts.map((item) => item.manifest.source_commit));
+  const compatible = realAttempts.every((item) => !item.manifest.repo_dirty && item.manifest.eligible_for_published_results) && commits.size <= 1;
+  const selected = new Map<string, typeof attempts[number]>();
+  for (const arm of ["U3-semantic-ui", "U5-maintainable"]) {
+    const success = attempts
+      .filter((item) => item.summary.user_prompt_id === arm && item.summary.run_type === "real" && item.summary.survived_versions >= 2 && item.summary.first_failed_version === null)
+      .sort((left, right) => left.manifest.started_at.localeCompare(right.manifest.started_at))[0];
+    if (success) selected.set(arm, success);
+  }
+  const outDir = path.join(rootDir, "reports", experimentId);
+  await ensureDir(outDir);
+  const comparison = {
+    schema_version: "0.1.0",
+    experiment_id: experimentId,
+    method: "First successful real v0-to-v2 trajectory per prompt arm; no statistical superiority claim.",
+    compatible_baseline: compatible,
+    tested_runner_commit: commits.size === 1 ? [...commits][0] : null,
+    selected_cases: Object.fromEntries([...selected.entries()].map(([arm, item]) => [arm, { execution_id: item.executionId, trajectory_id: item.summary.trajectory_id, versions: item.summary.versions, lifecycle_usage: item.summary.lifecycle_usage, required_supervision: item.summary.required_supervision, actual_human_activity: item.summary.actual_human_activity }])),
+    attempts: attempts.map((item) => ({ execution_id: item.executionId, trajectory_id: item.summary.trajectory_id, arm: item.summary.user_prompt_id, run_type: item.summary.run_type, status: item.manifest.status, repo_dirty: item.manifest.repo_dirty, eligible: item.manifest.eligible_for_published_results, first_failed_version: item.summary.first_failed_version, survived_versions: item.summary.survived_versions, failure_classes: item.summary.versions.map((version) => version.failure_classification) }))
+  };
+  await writeFile(path.join(outDir, "comparison.json"), JSON.stringify(comparison, null, 2), "utf8");
+  const csvRows = [["execution_id", "trajectory_id", "arm", "run_type", "status", "first_failed_version", "survived_versions", "repair_attempts", "clarification_rounds", "human_answers"]];
+  for (const item of attempts) csvRows.push([item.executionId, item.summary.trajectory_id, item.summary.user_prompt_id, item.summary.run_type, item.manifest.status, item.summary.first_failed_version ?? "", String(item.summary.survived_versions), String(item.summary.repair_attempts_total), String(item.summary.required_supervision.clarification_rounds), String(item.summary.actual_human_activity.human_answers_total)]);
+  await writeFile(path.join(outDir, "attempts.csv"), csvRows.map((row) => row.map((cell) => /[",\n]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell).join(",")).join("\n") + "\n", "utf8");
+  const selectedLines = ["U3-semantic-ui", "U5-maintainable"].map((arm) => {
+    const item = selected.get(arm);
+    return item ? `- ${arm}: ${item.summary.trajectory_id}; tokens=${item.summary.lifecycle_tokens ?? "unavailable"}; repairs=${item.summary.repair_attempts_total}; clarifications=${item.summary.required_supervision.clarification_rounds}` : `- ${arm}: no successful real v0->v2 case`;
+  });
+  await writeFile(path.join(outDir, "comparison.md"), ["# Observable Lifecycle Comparison", "", `Experiment: ${experimentId}`, "", "## Method", "", "First successful real v0->v2 case per arm. This report is descriptive and does not claim statistical superiority.", "", "## Baseline", "", `- compatible: ${compatible}`, `- runner commit: ${commits.size === 1 ? [...commits][0] : "incompatible or unavailable"}`, "", "## Selected Cases", "", ...selectedLines, "", "## All Attempts", "", ...attempts.map((item) => `- ${item.summary.user_prompt_id} / ${item.executionId}: ${item.summary.first_failed_version ? `failed at ${item.summary.first_failed_version}` : "passed"}; repairs=${item.summary.repair_attempts_total}; clarification rounds=${item.summary.required_supervision.clarification_rounds}`), ""].join("\n"), "utf8");
+  console.log(`comparison: ${path.join(outDir, "comparison.json")}`);
+  console.log(`report: ${path.join(outDir, "comparison.md")}`);
+  console.log(`attempts: ${path.join(outDir, "attempts.csv")}`);
+}
+
 async function verifyRunCommand(args: CliArgs): Promise<void> {
   const rootDir = process.cwd();
   const config = await loadMatrixConfig(resolveFromRoot(rootDir, stringOption(args, "config", "configs/mvp.yaml")));
@@ -2160,6 +2215,7 @@ function printHelp(): void {
   pnpm bench run-matrix --config configs/mvp.yaml --dry-run
   pnpm bench aggregate --config configs/mvp.yaml --execution <execution-id>
   pnpm bench aggregate --config configs/mvp.yaml --executions <execution-id>,<execution-id>
+  pnpm bench report-experiment --config configs/r2-ab-u3-vs-u5.yaml --id <experiment-id> --executions <execution-id>,<execution-id>
   pnpm bench verify-run --execution <execution-id>
   pnpm bench record-proof --execution <execution-id> --out proof/<name>.json --command "pnpm bench run-one ..."
   pnpm bench verify-opencode-parser
