@@ -180,6 +180,8 @@ export async function compileRepairPrompt(
     "",
     "## Requirement",
     "Fix only the failures needed to pass the benchmark.",
+    "Work directly in this workspace; do not delegate work or invoke subagents.",
+    "Read the relevant artifact logs before changing code when their diagnostics are needed.",
     "Preserve all existing behavior.",
     "Avoid unrelated rewrites.",
     "Do not remove benchmark tests or task reference files.",
