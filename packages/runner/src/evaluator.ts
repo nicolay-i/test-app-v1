@@ -257,8 +257,7 @@ async function runRuntimeSmoke(
       };
     }
 
-    const port = 4173 + Math.floor(Math.random() * 1000);
-    server = spawnVite(workspacePath, port);
+    server = spawnVite(workspacePath);
 
     server.stdout?.on("data", (chunk: Buffer) => {
       log += chunk.toString("utf8");
@@ -267,8 +266,8 @@ async function runRuntimeSmoke(
       log += chunk.toString("utf8");
     });
 
-    const url = `http://127.0.0.1:${port}/`;
-    const responseText = await waitForHttp(url, timeoutMs);
+    const { baseURL, responseText } = await waitForViteServer(server, () => log, timeoutMs);
+    const url = `${baseURL}/`;
     log += `\nFetched ${url}\n${responseText.slice(0, 500)}\n`;
 
     const passed = responseText.includes("<div id=\"root\">");
@@ -319,9 +318,7 @@ async function runPlaywrightCheck(options: {
   let server: ChildProcess | undefined;
 
   try {
-    const port = 5200 + Math.floor(Math.random() * 1000);
-    const baseURL = `http://127.0.0.1:${port}`;
-    server = spawnVite(options.workspacePath, port);
+    server = spawnVite(options.workspacePath);
     server.stdout?.on("data", (chunk: Buffer) => {
       serverLog += chunk.toString("utf8");
     });
@@ -329,7 +326,7 @@ async function runPlaywrightCheck(options: {
       serverLog += chunk.toString("utf8");
     });
 
-    await waitForHttp(baseURL, 60000);
+    const { baseURL } = await waitForViteServer(server, () => serverLog, 60000);
     await writeFile(
       configPath,
       [
@@ -398,10 +395,10 @@ async function stopDevServer(server: ChildProcess | undefined): Promise<void> {
   });
 }
 
-function spawnVite(workspacePath: string, port: number): ChildProcess {
+function spawnVite(workspacePath: string): ChildProcess {
   // Spawning Vite's Node entry point directly keeps one controllable process on
   // Windows; `pnpm dev` leaves orphaned cmd/Vite children after each evaluator phase.
-  return spawn(process.execPath, [path.join(workspacePath, "node_modules", "vite", "bin", "vite.js"), "--host", "127.0.0.1", "--port", String(port)], {
+  return spawn(process.execPath, [path.join(workspacePath, "node_modules", "vite", "bin", "vite.js"), "--host", "127.0.0.1", "--port", "0"], {
     cwd: workspacePath,
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, CI: process.env.CI ?? "true" }
@@ -557,23 +554,35 @@ async function readPlaywrightSummary(reportPath: string): Promise<{ passed: numb
   }
 }
 
-async function waitForHttp(url: string, timeoutMs: number): Promise<string> {
+async function waitForViteServer(
+  server: ChildProcess,
+  readLog: () => string,
+  timeoutMs: number
+): Promise<{ baseURL: string; responseText: string }> {
   const startedAt = Date.now();
   let lastError = "";
 
   while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) {
-        return response.text();
+    const urlMatch = readLog().match(/Local:\s+(http:\/\/127\.0\.0\.1:\d+)\/?/);
+    if (urlMatch) {
+      const baseURL = urlMatch[1]!;
+      try {
+        const response = await fetch(`${baseURL}/`);
+        if (response.ok) {
+          return { baseURL, responseText: await response.text() };
+        }
+        lastError = `HTTP ${response.status}`;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
       }
-      lastError = `HTTP ${response.status}`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (server.exitCode !== null) {
+      throw new Error(`Vite exited before becoming ready: ${tail(readLog().trim(), 600)}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  throw new Error(`Runtime server did not respond in ${timeoutMs}ms: ${lastError}`);
+  throw new Error(`Runtime server did not respond in ${timeoutMs}ms: ${lastError || "Vite did not announce a local URL"}`);
 }

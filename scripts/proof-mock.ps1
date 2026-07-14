@@ -9,13 +9,14 @@ function Get-ExecutionId([string]$Output) {
 }
 
 function Invoke-CapturedPnpm([string[]]$Arguments) {
-  $previousPreference = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
+  $stdoutPath = [System.IO.Path]::GetTempFileName()
+  $stderrPath = [System.IO.Path]::GetTempFileName()
   try {
-    $output = (& pnpm @Arguments 2>&1 | Out-String)
-    return [pscustomobject]@{ Output = $output; ExitCode = $LASTEXITCODE }
+    $process = Start-Process -FilePath 'pnpm.cmd' -ArgumentList $Arguments -WorkingDirectory (Get-Location).Path -NoNewWindow -PassThru -Wait -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $output = (Get-Content -Raw $stdoutPath) + (Get-Content -Raw $stderrPath)
+    return [pscustomobject]@{ Output = $output; ExitCode = $process.ExitCode }
   } finally {
-    $ErrorActionPreference = $previousPreference
+    Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
   }
 }
 
