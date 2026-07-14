@@ -114,7 +114,7 @@ function buildLifecyclePreflightPrompt(options: { versionId: string; request: st
   return [
     "# Requirements Preflight",
     "",
-    "Return one JSON object only. Do not edit files, run commands that modify files, or implement the request.",
+    "Return one JSON object only. Decide only from the attached request and context: do not inspect the workspace, read files, run tools or commands, invoke subagents, edit files, or implement the request.",
     "",
     'Schema: {"decision":"proceed | clarify | conflict | already_exists","reason":"","questions":[],"affected_areas":[]}',
     "",
