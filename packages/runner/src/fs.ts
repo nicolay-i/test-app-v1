@@ -28,14 +28,17 @@ export function resolveFromRoot(rootDir: string, maybeRelative: string): string 
   return path.isAbsolute(maybeRelative) ? maybeRelative : path.resolve(rootDir, maybeRelative);
 }
 
-export async function copyDirFiltered(source: string, destination: string): Promise<void> {
+export async function copyDirFiltered(source: string, destination: string, excludedPaths: string[] = []): Promise<void> {
+  const excluded = excludedPaths.map((item) => path.resolve(item));
   await cp(source, destination, {
     recursive: true,
     errorOnExist: false,
     force: false,
     filter: (entry) => {
+      const resolvedEntry = path.resolve(entry);
       const name = path.basename(entry);
       return (
+        !excluded.some((item) => resolvedEntry === item || resolvedEntry.startsWith(`${item}${path.sep}`)) &&
         !["node_modules", "dist", ".git", "coverage", "playwright-report"].includes(name) &&
         !name.startsWith(".ape-") &&
         !name.endsWith(".tsbuildinfo")

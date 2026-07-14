@@ -10,6 +10,7 @@ export async function verifyOpenCodeRetryFixture(): Promise<string[]> {
   const counterPath = path.join(root, "attempt-count");
   const argumentsPath = path.join(root, "attempt-arguments");
   const artifactsPath = path.join(root, "artifacts");
+  const workspacePath = path.join(root, "workspace");
   const originalPath = process.env.PATH;
   const originalCounter = process.env.OPENCODE_RETRY_COUNTER;
   const originalArguments = process.env.OPENCODE_RETRY_ARGUMENTS;
@@ -18,6 +19,8 @@ export async function verifyOpenCodeRetryFixture(): Promise<string[]> {
 
   try {
     await mkdir(binDir, { recursive: true });
+    await mkdir(path.join(workspacePath, "src"), { recursive: true });
+    await writeFile(path.join(workspacePath, "src", "marker.txt"), "fixture source\n", "utf8");
     await writeFile(
       commandPath,
       `$count = if (Test-Path $env:OPENCODE_RETRY_COUNTER) { [int](Get-Content -Raw $env:OPENCODE_RETRY_COUNTER) } else { 0 }
@@ -51,7 +54,7 @@ Write-Output '{"type":"step_finish","part":{"id":"step-2","tokens":{"input":4,"o
 
     const result = await runOpenCode({
       model: "fixture/model",
-      cwd: root,
+      cwd: workspacePath,
       prompt: "fixture",
       title: "retry-fixture",
       artifactsPath,
@@ -60,13 +63,17 @@ Write-Output '{"type":"step_finish","part":{"id":"step-2","tokens":{"input":4,"o
     });
     const attempts = JSON.parse(await readFile(path.join(artifactsPath, "opencode-attempts.json"), "utf8")) as {
       max_attempts: number;
-      attempts: Array<{ attempt: number; ok: boolean; purpose: string; continuedSessionId: string | null; continuationFallback: boolean }>;
+      attempts: Array<{ attempt: number; ok: boolean; purpose: string; continuedSessionId: string | null; continuationFallback: boolean; codeSnapshotPath: string }>;
     };
     const stdout = await readFile(path.join(artifactsPath, "opencode.stdout.log"), "utf8");
 
     if (!result.ok || result.attempts.length !== 2) failures.push("result-attempt-count");
     if (result.attempts[0]?.ok !== false || result.attempts[1]?.ok !== true) failures.push("attempt-outcomes");
     if (attempts.max_attempts !== 2 || attempts.attempts.length !== 2) failures.push("attempt-manifest");
+    for (const attempt of attempts.attempts) {
+      const snapshotMarker = await readFile(path.join(artifactsPath, attempt.codeSnapshotPath, "src", "marker.txt"), "utf8").catch(() => "");
+      if (snapshotMarker !== "fixture source\n") failures.push(`attempt-code-snapshot-${attempt.attempt}`);
+    }
     if (attempts.attempts[1]?.purpose !== "continuation" || attempts.attempts[1]?.continuedSessionId !== "session-1" || attempts.attempts[1]?.continuationFallback) failures.push("same-session-continuation");
     if (result.parsed.assistantText !== "second attempt" || !stdout.includes("second attempt") || stdout.includes("first attempt")) failures.push("canonical-final-attempt");
     if (result.parsed.usage.totalTokens !== 21 || result.attempts[0]?.usage.totalTokens !== 6 || result.attempts[1]?.usage.totalTokens !== 15) failures.push("aggregate-attempt-usage");
@@ -75,11 +82,11 @@ Write-Output '{"type":"step_finish","part":{"id":"step-2","tokens":{"input":4,"o
     if (!invocationArguments.some((value) => value.includes("--session") && value.includes("session-1"))) failures.push("continuation-command");
     await writeFile(counterPath, "0", "utf8");
     process.env.OPENCODE_RETRY_MODE = "model";
-    const modelFailure = await runOpenCode({ model: "fixture/model", cwd: root, prompt: "fixture", title: "no-retry-fixture", artifactsPath: path.join(root, "model-failure"), maxAttempts: 2, timeoutMs: 5_000 });
+    const modelFailure = await runOpenCode({ model: "fixture/model", cwd: workspacePath, prompt: "fixture", title: "no-retry-fixture", artifactsPath: path.join(root, "model-failure"), maxAttempts: 2, timeoutMs: 5_000 });
     if (modelFailure.attempts.length !== 1 || modelFailure.failureClassification !== "agent_failure") failures.push("do-not-retry-agent-failure");
     process.env.OPENCODE_RETRY_MODE = "timeout";
     const timeoutStartedAt = Date.now();
-    const timeoutFailure = await runOpenCode({ model: "fixture/model", cwd: root, prompt: "fixture", title: "timeout-fixture", artifactsPath: path.join(root, "timeout-failure"), maxAttempts: 1, timeoutMs: 50 });
+    const timeoutFailure = await runOpenCode({ model: "fixture/model", cwd: workspacePath, prompt: "fixture", title: "timeout-fixture", artifactsPath: path.join(root, "timeout-failure"), maxAttempts: 1, timeoutMs: 50 });
     if (timeoutFailure.failureClassification !== "technical_interruption" || timeoutFailure.attempts.length !== 1 || Date.now() - timeoutStartedAt > 1_500) failures.push("timeout-returns-terminal-result");
   } finally {
     if (originalPath === undefined) delete process.env.PATH;
@@ -90,10 +97,7 @@ Write-Output '{"type":"step_finish","part":{"id":"step-2","tokens":{"input":4,"o
     else process.env.OPENCODE_RETRY_ARGUMENTS = originalArguments;
     if (originalMode === undefined) delete process.env.OPENCODE_RETRY_MODE;
     else process.env.OPENCODE_RETRY_MODE = originalMode;
-    await rm(root, { recursive: true, force: true }).catch(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      await rm(root, { recursive: true, force: true });
-    });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
   }
 
   return failures;

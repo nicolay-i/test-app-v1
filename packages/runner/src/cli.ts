@@ -1210,6 +1210,8 @@ async function runMockOpenCode(
     }
   }
   await ensureDir(artifactsPath);
+  const codeSnapshotPath = path.join(artifactsPath, "opencode-attempts", "attempt-1", "workspace");
+  await copyDirFiltered(workspacePath, codeSnapshotPath, [artifactsPath]);
   const eventLine = JSON.stringify({ type: "text.delta", sessionId: "mock", delta: fail ? "mock failure" : `generated ${variant}` });
   const usageLine = profile === "usage-complete"
     ? `${JSON.stringify({ type: "usage", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, reportedCost: 0.001, currency: "USD" } })}\n`
@@ -1229,7 +1231,7 @@ async function runMockOpenCode(
   await writeFile(resultPath, JSON.stringify(parsed, null, 2), "utf8");
   await writeFile(assistantResponsePath, parsed.assistantText, "utf8");
   const completedAt = new Date().toISOString();
-  await writeFile(path.join(artifactsPath, "opencode-attempts.json"), JSON.stringify({ max_attempts: 1, attempts: [{ attempt: 1, ok: !fail, durationMs: Date.now() - startedAt, artifactsPath, exitCode: fail ? null : 0, startedAt: new Date(startedAt).toISOString(), endedAt: completedAt, terminalStatus: null, usage: parsed.usage }] }, null, 2), "utf8");
+  await writeFile(path.join(artifactsPath, "opencode-attempts.json"), JSON.stringify({ max_attempts: 1, attempts: [{ attempt: 1, ok: !fail, durationMs: Date.now() - startedAt, artifactsPath, codeSnapshotPath: path.relative(artifactsPath, codeSnapshotPath), exitCode: fail ? null : 0, startedAt: new Date(startedAt).toISOString(), endedAt: completedAt, terminalStatus: null, usage: parsed.usage }] }, null, 2), "utf8");
   return {
     ok: !fail,
     exitCode: fail ? null : 0,
@@ -1248,6 +1250,7 @@ async function runMockOpenCode(
       ok: !fail,
       durationMs: Date.now() - startedAt,
       artifactsPath,
+      codeSnapshotPath: path.relative(artifactsPath, codeSnapshotPath),
       sessionId: "mock",
       continuedSessionId: null,
       continuationFallback: false,

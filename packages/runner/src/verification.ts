@@ -54,6 +54,7 @@ export async function verifyExecution(executionPath: string): Promise<Verificati
       const versionPath = path.join(trajectoryPath, version.version_id);
       const required = ["prompt.md", "run-metadata.json", "opencode.stdout.log", "opencode.stderr.log", "opencode.events.jsonl", "opencode-result.json", "opencode-attempts.json", "assistant-response.md", "git.diff", "failure-summary.json", "report.md"];
       for (const name of required) if (!(await pathExists(path.join(versionPath, name)))) errors.push(`${trajectory.name}/${version.version_id}: missing ${name}`); else files += 1;
+      files += await verifyAttemptCodeSnapshots(versionPath, `${trajectory.name}/${version.version_id}`, errors);
       if (version.status !== "passed" && !(await pathExists(path.join(versionPath, "failure-summary.json")))) errors.push(`${trajectory.name}/${version.version_id}: failed version has no failure summary`);
       const metadataPath = path.join(versionPath, "run-metadata.json");
       if (await pathExists(metadataPath)) {
@@ -66,6 +67,39 @@ export async function verifyExecution(executionPath: string): Promise<Verificati
     }
   }
   return { ok: errors.length === 0, errors, files };
+}
+
+async function verifyAttemptCodeSnapshots(rootPath: string, label: string, errors: string[]): Promise<number> {
+  const manifests: string[] = [];
+  async function walk(currentPath: string): Promise<void> {
+    const entries = await readdir(currentPath, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const itemPath = path.join(currentPath, entry.name);
+      if (entry.isFile() && entry.name === "opencode-attempts.json") {
+        manifests.push(itemPath);
+      } else if (entry.isDirectory() && entry.name !== "opencode-attempts") {
+        await walk(itemPath);
+      }
+    }
+  }
+
+  await walk(rootPath);
+  let verifiedSnapshots = 0;
+  for (const manifestPath of manifests) {
+    const attempts = JSON.parse(await readFile(manifestPath, "utf8")) as { attempts?: Array<{ attempt?: number; codeSnapshotPath?: string }> };
+    for (const attempt of attempts.attempts ?? []) {
+      // Snapshots were introduced after the first executions. Keep their artifacts
+      // verifiable while enforcing every snapshot declared by a newer manifest.
+      if (!attempt.codeSnapshotPath) continue;
+      const snapshotPath = path.resolve(path.dirname(manifestPath), attempt.codeSnapshotPath);
+      if (!(await pathExists(snapshotPath))) {
+        errors.push(`${label}: attempt ${attempt.attempt ?? "?"} has a missing code snapshot`);
+      } else {
+        verifiedSnapshots += 1;
+      }
+    }
+  }
+  return verifiedSnapshots;
 }
 
 export async function createArtifactManifest(executionPath: string): Promise<{ path: string; sha256: string; size: number }[]> {

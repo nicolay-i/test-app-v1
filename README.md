@@ -46,6 +46,8 @@ pnpm bench import-jury-review --trajectory <trajectory-id> --review jury-packets
 
 Runner поддерживает TodoMVC-траекторию: генерацию v0, эволюционные промпты v1..v4, накопительные регрессионные тесты, несколько попыток repair (`repair-N`), requirements preflight с clarification rounds, continuation той же OpenCode session, артефакты по версиям, сводки траекторий, агрегацию, сценарии переговоров и экспорт/импорт слепых пакетов жюри.
 
+После каждой OpenCode-попытки runner сохраняет фильтрованный снапшот workspace в `opencode-attempts/attempt-N/workspace/`; путь записывается в `opencode-attempts.json` как `codeSnapshotPath`. В снапшот входят исходники и конфигурация, но не `node_modules`, build output, `.git` и служебные файлы benchmark-а. Это позволяет анализировать код каждого implementation, continuation, preflight и repair отдельно от финального `git.diff` версии.
+
 `--run-type mock` использует детерминированный локальный генератор и исключается из leaderboard. `--run-type real` вызывает OpenCode. Реальный запуск требует чистого git-дерева; `--allow-dirty` предназначен только для диагностики и помечает execution как непригодный для публикации. Для такого запуска сохраняются `source.patch` и его SHA-256.
 
 Каждый `run-one` и `run-matrix` по умолчанию создаёт новое execution. Возобновление требует `--resume <execution-id>` и отклоняет изменения типа запуска, исходного кода runner-а, состояния репозитория, config/task/prompt/scaffold-хешей, числа версий, mock-профиля или определения траектории. `--fresh` и `--force-new-execution` — явные синонимы нового запуска; их нельзя сочетать с `--resume`.

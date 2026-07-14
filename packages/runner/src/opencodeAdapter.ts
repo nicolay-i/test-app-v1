@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { copyFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ensureDir } from "./fs.js";
+import { copyDirFiltered, ensureDir } from "./fs.js";
 import { parseOpenCodeEvents, type AgentUsage, type ParsedOpenCodeResult } from "./opencodeEventParser.js";
 
 export type OpenCodeRunRequest = {
@@ -24,6 +24,7 @@ export type OpenCodeAttempt = {
   ok: boolean;
   durationMs: number;
   artifactsPath: string;
+  codeSnapshotPath: string;
   sessionId: string | null;
   continuedSessionId: string | null;
   continuationFallback: boolean;
@@ -74,12 +75,15 @@ export async function runOpenCode(request: OpenCodeRunRequest): Promise<OpenCode
           }
         : {})
     });
+    const codeSnapshotPath = path.join(artifactsPath, "workspace");
+    await copyDirFiltered(request.cwd, codeSnapshotPath, [request.artifactsPath]);
     attempts.push({
       attempt,
       purpose: continuation ? "continuation" : request.purpose ?? "implementation",
       ok: result.ok,
       durationMs: result.durationMs,
       artifactsPath,
+      codeSnapshotPath: path.relative(request.artifactsPath, codeSnapshotPath),
       sessionId: result.parsed.sessionId,
       continuedSessionId,
       continuationFallback: continuation && continuedSessionId === null,
